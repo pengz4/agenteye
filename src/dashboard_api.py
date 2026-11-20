@@ -896,9 +896,14 @@ def api_tasks(status: str | None = None):
 
 
 @app.get("/api/control-plane")
-def api_control_plane():
+def api_control_plane(request: Request):
     """Return a safe overview of the local personal-agent runtime stack."""
-    return inspect_control_plane(_read_dashboard_config(), agenteye_version=__version__)
+    active_url = f"{request.url.scheme}://{request.url.netloc}/"
+    return inspect_control_plane(
+        _read_dashboard_config(),
+        agenteye_version=__version__,
+        active_agenteye_url=active_url,
+    )
 
 
 @app.post("/api/tasks/sync", response_model=TaskSyncResponse)
