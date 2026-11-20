@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -32,7 +33,7 @@ def _probe_coach(url: str) -> bool:
             return response.status == 200 and any(
                 marker in page for marker in (b"AI Coach", b"AI Interview", b"AI/Agent")
             )
-    except (URLError, HTTPError, OSError, ValueError):
+    except (URLError, HTTPError, HTTPException, OSError, ValueError):
         return False
 
 

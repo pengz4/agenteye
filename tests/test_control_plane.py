@@ -1,4 +1,5 @@
 import json
+from http.client import IncompleteRead
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -147,3 +148,15 @@ def test_probe_coach_uses_same_loopback_validation_as_card_url(url):
         opener.return_value.open.return_value = response
         assert _probe_coach(url) is True
     opener.return_value.open.assert_called_once()
+
+
+def test_probe_coach_treats_truncated_response_as_unreachable():
+    from src.control_plane import _probe_coach
+
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    response.__exit__.return_value = None
+    response.read.side_effect = IncompleteRead(b"", 100)
+    with patch("src.control_plane.build_opener") as opener:
+        opener.return_value.open.return_value = response
+        assert _probe_coach("http://127.0.0.1:8765/") is False
