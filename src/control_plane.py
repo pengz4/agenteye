@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
+from .constants import DEFAULT_PORT
+
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, file, code, message, headers, new_url):
@@ -20,11 +22,12 @@ def _runtime(name: str, status: str, detail: str, url: str | None = None) -> dic
 
 
 def _probe_coach(url: str) -> bool:
-    if not url.startswith(("http://127.0.0.1:", "http://localhost:")):
+    safe_url = _safe_dashboard_url(url)
+    if safe_url is None:
         return False
     opener = build_opener(ProxyHandler({}), NoRedirect())
     try:
-        with opener.open(url, timeout=2) as response:
+        with opener.open(safe_url, timeout=2) as response:
             page = response.read(32768)
             return response.status == 200 and any(
                 marker in page for marker in (b"AI Coach", b"AI Interview", b"AI/Agent")
@@ -69,7 +72,9 @@ def inspect_control_plane(
     if not isinstance(stack, dict):
         stack = {}
 
-    agenteye_url = _safe_dashboard_url(stack.get("agenteye_url")) or "http://127.0.0.1:5112/"
+    agenteye_url = (
+        _safe_dashboard_url(stack.get("agenteye_url")) or f"http://127.0.0.1:{DEFAULT_PORT}/"
+    )
     configured_coach_url = stack.get("coach_url")
     coach_url = _safe_dashboard_url(configured_coach_url)
     skills_root = _configured_path(stack.get("skills_root"))

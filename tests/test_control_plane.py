@@ -81,9 +81,15 @@ def test_inspect_control_plane_sanitizes_dashboard_urls():
     )
 
     by_name = {item["name"]: item for item in result["runtimes"]}
-    assert by_name["Agent Eye"]["url"] == "http://127.0.0.1:5112/"
+    assert by_name["Agent Eye"]["url"] == "http://127.0.0.1:5111/"
     assert by_name["AI Coach"]["url"] is None
     assert by_name["AI Coach"]["status"] == "invalid_configuration"
+
+
+def test_default_agenteye_url_uses_packaged_default_port():
+    result = inspect_control_plane({}, agenteye_version="1.3.0")
+    agenteye = next(item for item in result["runtimes"] if item["name"] == "Agent Eye")
+    assert agenteye["url"] == "http://127.0.0.1:5111/"
 
 
 def test_missing_roots_do_not_probe_current_working_directory(tmp_path, monkeypatch):
@@ -120,3 +126,24 @@ def test_invalid_lock_shapes_do_not_raise(tmp_path, lock_payload):
 
     control = next(item for item in result["runtimes"] if item["name"] == "Control Plane")
     assert control["status"] == "invalid"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1:8765/",
+        "http://127.0.0.1/",
+        "http://[::1]:8765/",
+    ],
+)
+def test_probe_coach_uses_same_loopback_validation_as_card_url(url):
+    from src.control_plane import _probe_coach
+
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    response.__exit__.return_value = None
+    response.read.return_value = b"<title>AI Coach</title>"
+    with patch("src.control_plane.build_opener") as opener:
+        opener.return_value.open.return_value = response
+        assert _probe_coach(url) is True
+    opener.return_value.open.assert_called_once()
