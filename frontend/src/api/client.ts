@@ -20,6 +20,7 @@ import type {
   DashboardSettings,
   AgentTask,
   TaskSyncResult,
+  ControlPlaneOverview,
 } from "../types";
 
 /** Read the auth token injected by the server into the HTML page. */
@@ -77,6 +78,10 @@ export function fetchTasks(): Promise<AgentTask[]> {
 
 export function syncTasks(): Promise<TaskSyncResult> {
   return post<TaskSyncResult>("/api/tasks/sync");
+}
+
+export function fetchControlPlane(): Promise<ControlPlaneOverview> {
+  return get<ControlPlaneOverview>("/api/control-plane");
 }
 
 export function confirmTask(id: string): Promise<AgentTask> {

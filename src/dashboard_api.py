@@ -63,6 +63,7 @@ from .constants import (
     TASK_SYNC_INTERVAL,
     VERSION_CACHE_TTL,
 )
+from .control_plane import inspect_control_plane
 from .grouping import get_group_name
 from .models import EventData, ProcessInfo, VersionCache
 from .obsidian_sync import ObsidianSync, ObsidianSyncConfig, discover_obsidian_vault
@@ -892,6 +893,12 @@ def api_tasks(status: str | None = None):
     if status is not None and status not in allowed:
         return JSONResponse({"error": "Invalid task status"}, status_code=400)
     return _get_task_store().list(status)
+
+
+@app.get("/api/control-plane")
+def api_control_plane():
+    """Return a safe overview of the local personal-agent runtime stack."""
+    return inspect_control_plane(_read_dashboard_config(), agenteye_version=__version__)
 
 
 @app.post("/api/tasks/sync", response_model=TaskSyncResponse)

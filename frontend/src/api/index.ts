@@ -22,6 +22,7 @@ export {
   reopenTask,
   splitTask,
   mergeTasks,
+  fetchControlPlane,
   requestAchievementReview,
   skipAchievement,
   requestCoachPractice,

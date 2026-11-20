@@ -25,6 +25,7 @@ import Tooltip from "./Tooltip";
 import AutostartPopover from "./AutostartPopover";
 import { ToastContainer } from "./Toast";
 import TaskList from "./TaskList";
+import RuntimeOverview from "./RuntimeOverview";
 
 /** Version injected at build time — falls back to "dev" during development. */
 const INITIAL_VERSION = "dev";
@@ -92,6 +93,7 @@ function Dashboard() {
       />
 
       <div className="container">
+        <RuntimeOverview />
         {!widgetsCollapsed && <StatsRow active={active} processes={processes} />}
         <TabBar
           activeCount={active.length}

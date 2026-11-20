@@ -149,6 +149,17 @@ export interface DashboardSettings {
   coach_mode: "off" | "ask" | "auto";
 }
 
+export interface RuntimeCard {
+  name: string;
+  status: string;
+  detail: string;
+  url: string | null;
+}
+
+export interface ControlPlaneOverview {
+  runtimes: RuntimeCard[];
+}
+
 export type AgentTaskStatus =
   | "active"
   | "awaiting_confirmation"

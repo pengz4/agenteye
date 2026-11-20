@@ -336,6 +336,17 @@ def test_settings_reject_invalid_coach_mode(client, tmp_path):
     assert response.status_code == 400
 
 
+def test_control_plane_endpoint_returns_runtime_overview(client, tmp_path):
+    with patch(
+        "src.dashboard_api.inspect_control_plane",
+        return_value={"runtimes": [{"name": "Agent Eye", "status": "reachable"}]},
+    ):
+        response = client.get("/api/control-plane")
+
+    assert response.status_code == 200
+    assert response.json()["runtimes"][0]["name"] == "Agent Eye"
+
+
 def test_completed_candidate_is_queued_for_intake_automatically(client, tmp_path):
     task_db = tmp_path / "tasks.db"
     outbox = tmp_path / "intake.jsonl"
