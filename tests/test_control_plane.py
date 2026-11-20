@@ -1,6 +1,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.control_plane import inspect_control_plane
 
 
@@ -65,3 +67,56 @@ def test_inspect_control_plane_redacts_private_paths(tmp_path):
 
     serialized = json.dumps(result)
     assert "/secret/private" not in serialized
+
+
+def test_inspect_control_plane_sanitizes_dashboard_urls():
+    result = inspect_control_plane(
+        {
+            "stack": {
+                "agenteye_url": "file:///home/alice/private/dashboard",
+                "coach_url": "http://user:secret@127.0.0.1:8765/?token=secret",
+            }
+        },
+        agenteye_version="1.3.0",
+    )
+
+    by_name = {item["name"]: item for item in result["runtimes"]}
+    assert by_name["Agent Eye"]["url"] == "http://127.0.0.1:5112/"
+    assert by_name["AI Coach"]["url"] is None
+    assert by_name["AI Coach"]["status"] == "invalid_configuration"
+
+
+def test_missing_roots_do_not_probe_current_working_directory(tmp_path, monkeypatch):
+    (tmp_path / ".obsidian").mkdir()
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "personal-memory-mcp.js").write_text("", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "dashboard_server.py").write_text("", encoding="utf-8")
+    (tmp_path / "runtimes.lock.json").write_text('{"runtimes": {}}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = inspect_control_plane({}, agenteye_version="1.3.0")
+
+    by_name = {item["name"]: item for item in result["runtimes"]}
+    assert by_name["Personal Memory"]["status"] == "not_configured"
+    assert by_name["AI Coach"]["status"] == "not_configured"
+    assert by_name["Obsidian"]["status"] == "not_configured"
+    assert by_name["Control Plane"]["status"] == "not_configured"
+
+
+@pytest.mark.parametrize(
+    "lock_payload",
+    ["[]", '{"runtimes":[]}', '{"runtimes":null}'],
+)
+def test_invalid_lock_shapes_do_not_raise(tmp_path, lock_payload):
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "runtimes.lock.json").write_text(lock_payload, encoding="utf-8")
+
+    result = inspect_control_plane(
+        {"stack": {"skills_root": str(skills)}},
+        agenteye_version="1.3.0",
+    )
+
+    control = next(item for item in result["runtimes"] if item["name"] == "Control Plane")
+    assert control["status"] == "invalid"
