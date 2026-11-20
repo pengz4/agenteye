@@ -11,9 +11,10 @@ import { useRef, useState, useCallback } from "react";
 interface TabBarProps {
   activeCount: number;
   previousCount: number;
+  taskCount?: number;
 }
 
-export default function TabBar({ activeCount, previousCount }: TabBarProps) {
+export default function TabBar({ activeCount, previousCount, taskCount = 0 }: TabBarProps) {
   const { currentTab, currentView, groupBy, sortMode } = useAppState();
   const dispatch = useAppDispatch();
   const { notificationsEnabled, toggle: toggleNotif, popoverContent } =
@@ -45,6 +46,7 @@ export default function TabBar({ activeCount, previousCount }: TabBarProps) {
   const tabs: { key: Tab; label: string; icon: string; count?: number; title: string }[] = [
     { key: "active", label: "Active", icon: "⚡", count: activeCount, title: "Currently running sessions" },
     { key: "previous", label: "Previous", icon: "📋", count: previousCount, title: "Completed sessions from the last 5 days" },
+    { key: "tasks", label: "Task Review", icon: "✅", count: taskCount, title: "Review, confirm, reopen, split, or merge logical tasks" },
     { key: "timeline", label: "Timeline", icon: "📅", title: "Gantt-style view of session activity over the last 5 days" },
     { key: "files", label: "Files", icon: "📁", title: "Files most frequently edited across recent sessions" },
   ];

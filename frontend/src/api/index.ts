@@ -16,4 +16,13 @@ export {
   fetchAutostartStatus,
   enableAutostart,
   disableAutostart,
+  fetchTasks,
+  syncTasks,
+  confirmTask,
+  reopenTask,
+  splitTask,
+  mergeTasks,
+  requestAchievementReview,
+  skipAchievement,
+  requestCoachPractice,
 } from "./client";

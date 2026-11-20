@@ -143,8 +143,59 @@ agenteye autostart-remove
 - **Waiting context** — shows *what* a waiting session is asking (e.g. the `ask_user` question and choices)
 - **Background tasks** — shows count of running subagents per session
 - **Session details** — click any session to see checkpoints, recent tool output, references, and conversation history
+- **Task review queue** — tracks one logical task across multiple CLI turns and moves finished work into **Task Review** for explicit confirmation
+- **Obsidian task sync** — optionally creates canonical task notes and compact links in Daily Notes without copying full transcripts
 - **Tile & List views** — compact card grid or detailed expandable rows
 - **9 color palettes** and light/dark mode
+
+### Obsidian Task Sync
+
+Enable **Obsidian tasks** in the ☰ settings menu. Agent Eye auto-detects a
+single configured Obsidian Vault and reads the Daily Notes folder/format from
+`.obsidian/daily-notes.json`. To pin a Vault or use a custom task directory,
+configure `~/.copilot/dashboard-config.json`:
+
+```json
+{
+  "obsidian": {
+    "enabled": true,
+    "vault_path": "/path/to/My Vault",
+    "task_folder": "AgentEye/Tasks"
+  }
+}
+```
+
+Each logical task has one canonical Markdown file. Agent Eye owns only the
+marked `agenteye:task-managed` section; hand-written notes in the same file are
+preserved. Daily Notes receive a compact, idempotent status link rather than a
+copy of the task. When a task crosses midnight, the next Daily Note links to the
+original task file.
+
+Completed CLI work first enters **Task Review**. Confirming in Agent Eye
+or checking the task in Obsidian marks it complete; unchecking a completed task
+reopens it. Agent Eye writes metadata, short summaries, statuses, and
+milestones only—it does **not** copy prompts, transcripts, tool output, or code
+into the Vault.
+
+### Achievement and AI Coach Handoff
+
+Agent Eye keeps Achievement state separate from task state:
+
+1. A confirmed task becomes an achievement candidate.
+2. The existing `achievement-intake` workflow remains the **only Achievement writer** and decides whether the verified outcome is worth recording.
+3. Agent Eye observes the configured ledger for the stable `task:<task-id>` source key and shows `candidate`, `pending intake`, `linked`, or `skipped`.
+4. Duplicate intake requests use the same idempotent source key, so they cannot silently create a second task identity.
+
+Agent Eye can queue a sanitized re-review request, but it never writes the
+Achievement ledger or Daily Achievement note itself. Linked achievements can
+optionally feed AI Coach:
+
+- `Off` — do not generate Coach practice.
+- `Ask` — require a button click in Task Review.
+- `Auto` — queue practice generation once for the linked achievement.
+
+Coach requests generate practice-only events; they do not start a quiz or
+change mastery. The default mode is `Ask`.
 
 ### Cross-Machine Sync
 

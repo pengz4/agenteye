@@ -482,6 +482,12 @@ describe("TabBar", () => {
     expect(screen.getByText(/Files/)).toBeInTheDocument();
   });
 
+  it("uses an unambiguous task review tab label", () => {
+    renderWithProvider(<TabBar activeCount={3} previousCount={5} taskCount={2} />);
+    expect(screen.getByText(/Task Review/)).toBeInTheDocument();
+    expect(screen.queryByText(/Needs Confirmation/)).not.toBeInTheDocument();
+  });
+
   it("shows active count badge", () => {
     renderWithProvider(<TabBar activeCount={7} previousCount={0} />);
     expect(screen.getByText("7")).toBeInTheDocument();

@@ -1,5 +1,6 @@
 """Tests for process_tracker.py — event parsing and session state detection."""
 
+import base64
 import json
 import os
 import time
@@ -82,8 +83,8 @@ class TestExtractResumeSessionId:
         cmdline = "copilot --resume old-sess --session-id new-sess"
         assert _extract_resume_session_id(cmdline) == "old-sess"
 
-    def test_session_id_without_resume_returns_none(self):
-        assert _extract_resume_session_id("copilot --session-id run-id") is None
+    def test_session_id_without_resume_is_explicit(self):
+        assert _extract_resume_session_id("copilot --session-id run-id") == "run-id"
 
     def test_missing_resume_returns_none(self):
         assert _extract_resume_session_id("copilot --yolo") is None
@@ -870,7 +871,7 @@ class TestGetRunningSessionsUnix:
         assert sessions["abc-123-def"].pid == 9643
         assert sessions["abc-123-def"].parent_pid == 4510
 
-    def test_inuse_lock_maps_live_pid_to_transcript_session(self):
+    def test_explicit_session_id_takes_precedence_over_duplicate_inuse_lock(self):
         ps_out = self._make_ps_output([
             " 17191 4510 Wed Feb 25 21:15:57 2026 /opt/homebrew/lib/node_modules/@github/copilot/copilot --session-id 5071e724",
         ])
@@ -893,9 +894,9 @@ class TestGetRunningSessionsUnix:
         ):
             sessions = _get_running_sessions_unix()
 
-        assert set(sessions) == {"28e010e5"}
-        assert "5071e724" not in sessions
-        assert sessions["28e010e5"].pid == 17191
+        assert set(sessions) == {"5071e724"}
+        assert "28e010e5" not in sessions
+        assert sessions["5071e724"].pid == 17191
         mock_match.assert_not_called()
 
     def test_stale_inuse_lock_without_live_pid_is_ignored(self):
@@ -1180,7 +1181,7 @@ class TestGetRunningSessionsWindows:
         assert "win-sess-001" in sessions
         assert sessions["win-sess-001"].pid == 1234
 
-    def test_inuse_lock_maps_live_pid_to_transcript_session(self):
+    def test_explicit_session_id_takes_precedence_over_inuse_lock(self):
         procs = [
             {
                 "ProcessId": 17191,
@@ -1201,9 +1202,9 @@ class TestGetRunningSessionsWindows:
         ):
             sessions = _get_running_sessions_windows()
 
-        assert set(sessions) == {"28e010e5"}
-        assert "5071e724" not in sessions
-        assert sessions["28e010e5"].pid == 17191
+        assert set(sessions) == {"5071e724"}
+        assert "28e010e5" not in sessions
+        assert sessions["5071e724"].pid == 17191
         mock_match.assert_not_called()
 
     def test_stale_inuse_lock_without_live_pid_is_ignored(self):
@@ -1697,6 +1698,71 @@ class TestGetMtimeThreshold:
             result = _detect_mtime_active_sessions({})
 
         assert sid in result
+
+
+# ---------------------------------------------------------------------------
+# WSL focus
+# ---------------------------------------------------------------------------
+
+
+class TestFocusSessionWindowWsl:
+    def test_detects_wsl_from_platform_environment(self):
+        from src.process_tracker import _is_wsl
+
+        with (
+            patch("src.process_tracker.sys.platform", "linux"),
+            patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}),
+        ):
+            assert _is_wsl() is True
+
+    def test_wsl_focus_selects_matching_terminal_tab(self):
+        from src.process_tracker import _focus_session_window_wsl
+
+        completed = MagicMock(
+            returncode=0,
+            stdout="Focused: Discuss MVP14 Cloud Migration Architecture - GitHub Copilot\n",
+            stderr="",
+        )
+        sessions = {
+            "session-1": ProcessInfo(
+                pid=100, parent_pid=200, terminal_pid=0, terminal_name=""
+            )
+        }
+        with (
+            patch(
+                "src.process_tracker._get_session_match_candidates",
+                return_value=["discuss mvp14 cloud migration architecture"],
+            ),
+            patch("src.process_tracker.subprocess.run", return_value=completed) as run,
+        ):
+            ok, message = _focus_session_window_wsl("session-1", sessions)
+
+        assert ok is True
+        assert "Discuss MVP14" in message
+        command = run.call_args.args[0]
+        assert command[:2] == ["powershell.exe", "-NoProfile"]
+        assert "-EncodedCommand" in command
+        script = base64.b64decode(command[-1]).decode("utf-16-le")
+        assert "NativeWindowHandle" in script
+        assert "SwitchToThisWindow" in script
+        assert "AppActivate" not in script
+
+    def test_wsl_focus_reports_no_tab_match(self):
+        from src.process_tracker import _focus_session_window_wsl
+
+        completed = MagicMock(returncode=1, stdout="", stderr="No matching tab")
+        sessions = {"session-1": ProcessInfo(pid=100)}
+        with (
+            patch(
+                "src.process_tracker._get_session_match_candidates",
+                return_value=["missing session"],
+            ),
+            patch("src.process_tracker.subprocess.run", return_value=completed),
+        ):
+            ok, message = _focus_session_window_wsl("session-1", sessions)
+
+        assert ok is False
+        assert "No matching tab" in message
 
 
 # ---------------------------------------------------------------------------
@@ -2357,6 +2423,7 @@ class TestFocusSessionWindow:
         with (
             patch("src.process_tracker.get_running_sessions", return_value=fake),
             patch("src.process_tracker.sys.platform", "linux"),
+            patch("src.process_tracker._is_wsl", return_value=False),
         ):
             ok, msg = focus_session_window("sess-1")
         assert ok is False

@@ -10,6 +10,12 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   sync_enabled: true,
   log_level: "INFO",
   mtime_active_threshold: 120,
+  obsidian_enabled: false,
+  obsidian_vault_path: "",
+  obsidian_task_folder: "AgentEye/Tasks",
+  obsidian_status: "disabled",
+  achievement_ledger_path: "",
+  coach_mode: "ask",
 };
 
 export interface UseSettingsResult {
@@ -18,6 +24,10 @@ export interface UseSettingsResult {
   setSyncEnabled: (enabled: boolean) => void;
   setLogLevel: (level: string) => void;
   setMtimeThreshold: (seconds: number) => void;
+  setObsidianEnabled: (enabled: boolean) => void;
+  setObsidianVaultPath: (path: string) => void;
+  setObsidianTaskFolder: (folder: string) => void;
+  setCoachMode: (mode: DashboardSettings["coach_mode"]) => void;
 }
 
 export function useSettings(): UseSettingsResult {
@@ -52,5 +62,23 @@ export function useSettings(): UseSettingsResult {
       .catch(() => {});
   }, []);
 
-  return { settings, loading, setSyncEnabled, setLogLevel, setMtimeThreshold };
+  const patchSettings = useCallback((patch: Partial<DashboardSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
+    updateSettings(patch).then(setSettings).catch(() => {});
+  }, []);
+
+  return {
+    settings,
+    loading,
+    setSyncEnabled,
+    setLogLevel,
+    setMtimeThreshold,
+    setObsidianEnabled: (enabled) =>
+      patchSettings({ obsidian_enabled: enabled }),
+    setObsidianVaultPath: (path) =>
+      patchSettings({ obsidian_vault_path: path }),
+    setObsidianTaskFolder: (folder) =>
+      patchSettings({ obsidian_task_folder: folder }),
+    setCoachMode: (mode) => patchSettings({ coach_mode: mode }),
+  };
 }

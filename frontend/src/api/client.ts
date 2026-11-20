@@ -18,6 +18,8 @@ import type {
   ServerInfo,
   AutostartStatus,
   DashboardSettings,
+  AgentTask,
+  TaskSyncResult,
 } from "../types";
 
 /** Read the auth token injected by the server into the HTML page. */
@@ -54,6 +56,70 @@ async function put<T>(url: string, body: unknown): Promise<T> {
   });
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
   return resp.json() as Promise<T>;
+}
+
+/** Generic POST+JSON helper — throws on non-2xx responses. */
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const resp = await fetch(withToken(url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+  return resp.json() as Promise<T>;
+}
+
+// ── Task tracking ───────────────────────────────────────────────────────────
+
+export function fetchTasks(): Promise<AgentTask[]> {
+  return get<AgentTask[]>("/api/tasks");
+}
+
+export function syncTasks(): Promise<TaskSyncResult> {
+  return post<TaskSyncResult>("/api/tasks/sync");
+}
+
+export function confirmTask(id: string): Promise<AgentTask> {
+  return post<AgentTask>(`/api/task/${encodeURIComponent(id)}/confirm`);
+}
+
+export function reopenTask(id: string): Promise<AgentTask> {
+  return post<AgentTask>(`/api/task/${encodeURIComponent(id)}/reopen`);
+}
+
+export function splitTask(
+  id: string,
+  title: string,
+): Promise<AgentTask> {
+  return postJson<AgentTask>(`/api/task/${encodeURIComponent(id)}/split`, {
+    title,
+  });
+}
+
+export function mergeTasks(
+  targetId: string,
+  sourceId: string,
+): Promise<AgentTask> {
+  return postJson<AgentTask>("/api/task/merge", {
+    target_id: targetId,
+    source_id: sourceId,
+  });
+}
+
+export function requestAchievementReview(id: string): Promise<AgentTask> {
+  return post<AgentTask>(
+    `/api/task/${encodeURIComponent(id)}/achievement/request`,
+  );
+}
+
+export function skipAchievement(id: string): Promise<AgentTask> {
+  return post<AgentTask>(
+    `/api/task/${encodeURIComponent(id)}/achievement/skip`,
+  );
+}
+
+export function requestCoachPractice(id: string): Promise<AgentTask> {
+  return post<AgentTask>(`/api/task/${encodeURIComponent(id)}/coach/request`);
 }
 
 // ── Session data ─────────────────────────────────────────────────────────────

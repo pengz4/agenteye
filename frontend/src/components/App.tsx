@@ -8,7 +8,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { AppProvider, useAppState, useAppDispatch } from "../state";
 import type { Tab } from "../state";
-import { useSessions } from "../hooks";
+import { useSessions, useTasks } from "../hooks";
 import { fetchServerInfo } from "../api";
 import { filterSessions, splitActivePrevious } from "../utils";
 import Header from "./Header";
@@ -24,6 +24,7 @@ import DisconnectOverlay from "./DisconnectOverlay";
 import Tooltip from "./Tooltip";
 import AutostartPopover from "./AutostartPopover";
 import { ToastContainer } from "./Toast";
+import TaskList from "./TaskList";
 
 /** Version injected at build time — falls back to "dev" during development. */
 const INITIAL_VERSION = "dev";
@@ -35,6 +36,7 @@ function Dashboard() {
 
   // Start polling
   useSessions();
+  const taskState = useTasks();
 
   // Fetch server PID on mount
   useEffect(() => {
@@ -45,7 +47,7 @@ function Dashboard() {
 
   // Handle URL hash on mount (e.g. #timeline)
   useEffect(() => {
-    const validTabs: Tab[] = ["active", "previous", "timeline", "files"];
+    const validTabs: Tab[] = ["active", "previous", "tasks", "timeline", "files"];
     const hashTab = location.hash.replace("#", "") as Tab;
     if (validTabs.includes(hashTab)) {
       dispatch({ type: "SET_TAB", tab: hashTab });
@@ -91,7 +93,11 @@ function Dashboard() {
 
       <div className="container">
         {!widgetsCollapsed && <StatsRow active={active} processes={processes} />}
-        <TabBar activeCount={active.length} previousCount={previous.length} />
+        <TabBar
+          activeCount={active.length}
+          previousCount={previous.length}
+          taskCount={taskState.reviewCount}
+        />
         <SearchBar />
 
         {/* Active panel */}
@@ -141,6 +147,27 @@ function Dashboard() {
               panelId="panel-previous"
             />
           )}
+        </div>
+
+        {/* Task confirmation panel */}
+        <div
+          className={`tab-panel ${currentTab === "tasks" ? "active" : ""}`}
+        >
+          {taskState.error && (
+            <div role="alert" className="empty-state" style={{ color: "var(--red)" }}>
+              Task sync unavailable: {taskState.error}
+            </div>
+          )}
+          <TaskList
+            tasks={taskState.tasks}
+            onConfirm={taskState.confirm}
+            onReopen={taskState.reopen}
+            onSplit={taskState.split}
+            onMerge={taskState.merge}
+            onRequestAchievement={taskState.requestAchievement}
+            onSkipAchievement={taskState.skipAchievement}
+            onRequestCoach={taskState.requestCoach}
+          />
         </div>
 
         {/* Timeline panel */}

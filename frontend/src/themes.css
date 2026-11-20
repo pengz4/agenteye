@@ -277,6 +277,12 @@ button.hamburger-item {
   border-radius: 4px; padding: 2px 6px; font-size: 0.85em; cursor: pointer;
   margin-left: auto;
 }
+.hamburger-input { gap: 12px; cursor: default; }
+.hamburger-input input {
+  width: 180px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+  margin-left: auto; font: inherit;
+}
 
 /* ===== CONTAINER ===== */
 .container { max-width: 1920px; margin: 0 auto; padding: 20px 24px; }
@@ -366,7 +372,10 @@ button.hamburger-item {
 body:has(.disconnect-overlay) .live-logo,
 body:has(.disconnect-overlay) .header-live-dot {
   animation: none !important;
-} display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+}
+.session-meta {
+  display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center;
+}
 .badge {
   font-size: 12px; padding: 2px 9px; border-radius: 10px; font-weight: 500;
   transition: background 0.15s;

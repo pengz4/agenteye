@@ -26,6 +26,7 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .__version__ import __version__
+from .achievement_bridge import AchievementBridge
 from .claude_code import (
     SESSION_ID_PREFIX as CC_PREFIX,
 )
@@ -43,6 +45,9 @@ from .claude_code import (
     get_running_claude_sessions,
 )
 from .constants import (
+    ACHIEVEMENT_INTAKE_OUTBOX,
+    ACHIEVEMENT_LEDGER_PATH,
+    AI_COACH_OUTBOX,
     DASHBOARD_CONFIG_PATH,
     DEFAULT_PLAN_FILES,
     PYPI_FETCH_TIMEOUT,
@@ -54,10 +59,13 @@ from .constants import (
     SESSION_STATE_DIR,
     SESSION_STORE_DB,
     SYNC_EXPORT_INTERVAL,
+    TASK_STORE_DB,
+    TASK_SYNC_INTERVAL,
     VERSION_CACHE_TTL,
 )
 from .grouping import get_group_name
 from .models import EventData, ProcessInfo, VersionCache
+from .obsidian_sync import ObsidianSync, ObsidianSyncConfig, discover_obsidian_vault
 from .process_tracker import (
     focus_session_window,
     get_recent_output,
@@ -74,6 +82,10 @@ from .schemas import (
     SessionDetailResponse,
     SessionResponse,
     SettingsResponse,
+    TaskMergeRequest,
+    TaskResponse,
+    TaskSplitRequest,
+    TaskSyncResponse,
     VersionResponse,
 )
 from .scout import (
@@ -86,6 +98,7 @@ from .scout import (
     get_scout_sessions,
 )
 from .sync import export_sessions, read_remote_sessions, resolve_sync_folder
+from .task_store import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +126,48 @@ DB_PATH = SESSION_STORE_DB
 _version_cache = VersionCache()
 _version_lock = threading.Lock()
 _sync_folder = resolve_sync_folder()
+_task_store: TaskStore | None = None
+_task_store_path: str | None = None
+_obsidian_snapshots: dict[str, tuple[str, str, str]] = {}
+_task_sync_lock = threading.RLock()
+
+
+def _get_achievement_bridge() -> AchievementBridge:
+    cfg = _read_dashboard_config().get("achievement", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    ledger_path = str(cfg.get("ledger_path") or ACHIEVEMENT_LEDGER_PATH)
+    intake_outbox = str(cfg.get("intake_outbox") or ACHIEVEMENT_INTAKE_OUTBOX)
+    coach_outbox = str(cfg.get("coach_outbox") or AI_COACH_OUTBOX)
+    return AchievementBridge(
+        ledger_path=ledger_path,
+        intake_outbox=intake_outbox,
+        coach_outbox=coach_outbox,
+    )
+
+
+def _coach_mode() -> str:
+    cfg = _read_dashboard_config().get("coach", {})
+    if not isinstance(cfg, dict):
+        return "ask"
+    mode = str(cfg.get("mode") or "ask")
+    return mode if mode in {"off", "ask", "auto"} else "ask"
+
 
 # ── Background sync ─────────────────────────────────────────────────────────
 
 _sync_stop = threading.Event()
+_task_sync_stop = threading.Event()
+
+
+def _get_task_store() -> TaskStore:
+    """Return the lazily-created task store, recreating it when tests change its path."""
+    global _task_store, _task_store_path
+    configured_path = os.path.abspath(TASK_STORE_DB)
+    if _task_store is None or _task_store_path != configured_path:
+        _task_store = TaskStore(configured_path)
+        _task_store_path = configured_path
+    return _task_store
 
 
 def _sync_loop() -> None:
@@ -130,6 +181,18 @@ def _sync_loop() -> None:
             export_sessions(active, _sync_folder)
         except Exception:
             logger.debug("Background sync export failed", exc_info=True)
+
+
+def _task_sync_loop() -> None:
+    """Reconcile active CLI tasks and synchronize Obsidian in the background."""
+    while not _task_sync_stop.wait(timeout=TASK_SYNC_INTERVAL):
+        try:
+            with _task_sync_lock:
+                _reconcile_tasks()
+                _sync_tasks_to_obsidian()
+                _reconcile_achievement_handoff()
+        except Exception:
+            logger.exception("Background task synchronization failed")
 
 
 def _build_session_list() -> list[dict]:
@@ -181,17 +244,25 @@ def _build_session_list() -> list[dict]:
 async def _lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     """Start background sync thread on startup, stop it on shutdown."""
     sync_thread: threading.Thread | None = None
+    _sync_stop.clear()
+    _task_sync_stop.clear()
     if _sync_folder:
         sync_thread = threading.Thread(target=_sync_loop, daemon=True, name="sync-export")
         sync_thread.start()
         logger.info("Background sync started (interval=%ds)", SYNC_EXPORT_INTERVAL)
+    task_thread = threading.Thread(target=_task_sync_loop, daemon=True, name="task-sync")
+    task_thread.start()
+    logger.info("Background task sync started (interval=%ds)", TASK_SYNC_INTERVAL)
 
     yield
 
     _sync_stop.set()
+    _task_sync_stop.set()
     if sync_thread is not None:
         sync_thread.join(timeout=5)
         logger.info("Background sync stopped")
+    task_thread.join(timeout=5)
+    logger.info("Background task sync stopped")
 
 
 app = FastAPI(
@@ -632,10 +703,310 @@ def _sessions_from_events() -> list[dict]:
 # ── API Routes ───────────────────────────────────────────────────────────────
 
 
+def _task_source_message(session: dict) -> tuple[str, int]:
+    """Use session metadata plus turn count without exporting raw turn content."""
+    detail = api_session_detail(str(session["id"]))
+    latest_turn_index = -1
+    if isinstance(detail, dict):
+        turns = detail.get("turns", [])
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            latest_turn_index = max(latest_turn_index, int(turn.get("turn_index", -1)))
+    title = str(
+        session.get("intent")
+        or session.get("recent_activity")
+        or session.get("summary")
+        or "Untitled task"
+    ).strip()
+    turn_count = int(session.get("turn_count", 0) or 0)
+    return title[:500], max(latest_turn_index, turn_count - 1, 0)
+
+
+def _reconcile_tasks(sessions: list[dict] | None = None) -> list[dict]:
+    """Map active CLI sessions to durable tasks and transition idle sessions."""
+    store = _get_task_store()
+    if sessions is None:
+        sessions = _build_session_list()
+    by_session = {str(session["id"]): session for session in sessions}
+    reconciled: list[dict] = []
+
+    for session in sessions:
+        if not session.get("is_running"):
+            continue
+        message, turn_index = _task_source_message(session)
+        reconciled.append(
+            store.reconcile_session(
+                session_id=str(session["id"]),
+                source=str(session.get("source") or "copilot"),
+                title=message,
+                turn_index=turn_index,
+                cwd=str(session.get("cwd") or ""),
+                is_running=True,
+                session_state=str(session.get("state") or "unknown"),
+            )
+        )
+
+    for task in store.list():
+        if task["status"] in {"completed", "awaiting_confirmation", "merged"}:
+            continue
+        open_session = by_session.get(task["session_id"])
+        if open_session is not None and open_session.get("is_running"):
+            continue
+        reconciled.append(
+            store.reconcile_session(
+                session_id=task["session_id"],
+                source=task["source"],
+                title=task["summary"],
+                turn_index=task["last_turn_index"],
+                cwd=task["cwd"],
+                is_running=False,
+                session_state="unknown",
+            )
+        )
+    return reconciled
+
+
+def _obsidian_config() -> tuple[ObsidianSync | None, str, ObsidianSyncConfig | None]:
+    cfg = _read_dashboard_config().get("obsidian", {})
+    if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+        return None, "disabled", None
+
+    configured_path = str(cfg.get("vault_path") or "").strip()
+    vault_path = Path(configured_path).expanduser() if configured_path else None
+    if vault_path is None:
+        vault_path = discover_obsidian_vault()
+    if vault_path is None:
+        return None, "vault_not_configured", None
+    if not vault_path.is_dir():
+        return None, "vault_not_found", None
+
+    task_folder = str(cfg.get("task_folder") or "AgentEye/Tasks")
+    resolved = ObsidianSyncConfig(vault_path=vault_path, task_folder=task_folder)
+    return ObsidianSync(resolved), "enabled", resolved
+
+
+def _sync_tasks_to_obsidian(*, read_feedback: bool = True) -> tuple[int, str]:
+    """Apply manual completion changes, then publish changed task snapshots."""
+    writer, status, config = _obsidian_config()
+    if writer is None or config is None:
+        return 0, status
+
+    store = _get_task_store()
+    synced = 0
+    with _task_sync_lock:
+        for task in store.list():
+            if read_feedback:
+                checked = writer.read_daily_task_completion(task)
+                if checked is True and task["status"] != "completed":
+                    task = store.confirm(task["id"])
+                elif checked is False and task["status"] == "completed":
+                    task = store.reopen(task["id"])
+
+            snapshot = (
+                str(task["updated_at"]),
+                str(task["status"]),
+                str(task["last_activity_date"]),
+            )
+            if _obsidian_snapshots.get(task["id"]) == snapshot and task["obsidian_path"]:
+                continue
+            result = writer.sync_task(task, store.activities(task["id"]))
+            task = store.set_obsidian_path(task["id"], result.task_path.as_posix())
+            _obsidian_snapshots[task["id"]] = snapshot
+            synced += 1
+    return synced, status
+
+
+def _reconcile_achievement_handoff() -> tuple[int, int]:
+    """Observe intake writes and stage only downstream Coach requests."""
+    bridge = _get_achievement_bridge()
+    links = bridge.find_links()
+    store = _get_task_store()
+    linked_count = 0
+    coach_count = 0
+    mode = _coach_mode()
+
+    with _task_sync_lock:
+        for task in store.list():
+            source_key = task.get("achievement_source_key")
+            if not source_key:
+                continue
+            refs = links.get(str(source_key), [])
+            if refs and task["achievement_status"] != "linked":
+                task = store.mark_achievement_linked(task["id"], achievement_ref=refs[0])
+                linked_count += 1
+            if task["status"] == "completed" and task["achievement_status"] == "candidate":
+                task = store.request_achievement_review(task["id"])
+            if (
+                task["achievement_status"] == "pending_intake"
+                and task.get("achievement_source_key")
+                and not bridge.has_intake_request(task["achievement_source_key"])
+            ):
+                try:
+                    bridge.enqueue_intake(task)
+                except OSError:
+                    logger.warning(
+                        "Could not append achievement intake request; will retry",
+                        exc_info=True,
+                    )
+            if task["achievement_status"] != "linked":
+                continue
+
+            current_coach_status = task.get("coach_status") or "off"
+            should_apply = (
+                mode == "off"
+                or (
+                    mode == "ask"
+                    and current_coach_status
+                    not in {
+                        "needs_confirmation",
+                        "pending",
+                        "generated",
+                        "skipped",
+                    }
+                )
+                or (
+                    mode == "auto"
+                    and current_coach_status not in {"pending", "generated", "skipped"}
+                )
+            )
+            if not should_apply:
+                continue
+            coach_status = bridge.apply_coach_policy(task, mode)
+            if coach_status != current_coach_status:
+                store.set_coach_status(task["id"], coach_status)
+                coach_count += 1
+    return linked_count, coach_count
+
+
 @app.get("/api/sessions", response_model=list[SessionResponse])
 def api_sessions():
     """List all sessions with enriched metadata."""
     return _build_session_list()
+
+
+@app.get("/api/tasks", response_model=list[TaskResponse])
+def api_tasks(status: str | None = None):
+    """List tracked tasks, optionally filtered by lifecycle status."""
+    allowed = {"active", "awaiting_confirmation", "completed", "blocked"}
+    if status is not None and status not in allowed:
+        return JSONResponse({"error": "Invalid task status"}, status_code=400)
+    return _get_task_store().list(status)
+
+
+@app.post("/api/tasks/sync", response_model=TaskSyncResponse)
+def api_tasks_sync():
+    """Reconcile current sessions and publish changed tasks."""
+    with _task_sync_lock:
+        reconciled = _reconcile_tasks()
+        obsidian_synced, obsidian_status = _sync_tasks_to_obsidian()
+        achievement_linked, coach_staged = _reconcile_achievement_handoff()
+    return {
+        "tasks": _get_task_store().list(),
+        "reconciled": len(reconciled),
+        "obsidian_synced": obsidian_synced,
+        "obsidian_status": obsidian_status,
+        "achievement_linked": achievement_linked,
+        "coach_staged": coach_staged,
+    }
+
+
+@app.post("/api/task/{task_id}/confirm", response_model=TaskResponse)
+def api_task_confirm(task_id: str):
+    with _task_sync_lock:
+        try:
+            task = _get_task_store().confirm(task_id)
+        except KeyError:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        _sync_tasks_to_obsidian(read_feedback=False)
+    return task
+
+
+@app.post("/api/task/{task_id}/reopen", response_model=TaskResponse)
+def api_task_reopen(task_id: str):
+    with _task_sync_lock:
+        try:
+            task = _get_task_store().reopen(task_id)
+        except KeyError:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        _sync_tasks_to_obsidian(read_feedback=False)
+    return task
+
+
+@app.post("/api/task/{task_id}/split", response_model=TaskResponse)
+def api_task_split(task_id: str, request: TaskSplitRequest):
+    with _task_sync_lock:
+        try:
+            task = _get_task_store().split(
+                task_id, title=request.title, turn_index=request.turn_index
+            )
+        except KeyError:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        _sync_tasks_to_obsidian(read_feedback=False)
+    return task
+
+
+@app.post("/api/task/merge", response_model=TaskResponse)
+def api_task_merge(request: TaskMergeRequest):
+    with _task_sync_lock:
+        try:
+            task = _get_task_store().merge(target_id=request.target_id, source_id=request.source_id)
+        except KeyError:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        _sync_tasks_to_obsidian(read_feedback=False)
+    return task
+
+
+@app.post("/api/task/{task_id}/achievement/request", response_model=TaskResponse)
+def api_task_achievement_request(task_id: str):
+    with _task_sync_lock:
+        store = _get_task_store()
+        try:
+            task = store.request_achievement_review(task_id)
+            if task["achievement_status"] != "linked":
+                _get_achievement_bridge().enqueue_intake(task)
+        except KeyError:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+    return task
+
+
+@app.post("/api/task/{task_id}/achievement/skip", response_model=TaskResponse)
+def api_task_achievement_skip(task_id: str):
+    try:
+        return _get_task_store().skip_achievement(task_id)
+    except KeyError:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+
+@app.post("/api/task/{task_id}/coach/request", response_model=TaskResponse)
+def api_task_coach_request(task_id: str):
+    with _task_sync_lock:
+        store = _get_task_store()
+        task = store.get(task_id)
+        if task is None:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        if task["achievement_status"] != "linked":
+            return JSONResponse(
+                {"error": "Coach requests require a linked achievement"}, status_code=409
+            )
+        mode = _coach_mode()
+        if mode == "off":
+            return JSONResponse({"error": "AI Coach mode is off"}, status_code=409)
+        if task["coach_status"] in {"pending", "generated", "skipped"}:
+            return task
+        if mode == "ask" and task["coach_status"] != "needs_confirmation":
+            return JSONResponse(
+                {"error": "Coach practice is already requested or not awaiting approval"},
+                status_code=409,
+            )
+        _get_achievement_bridge().apply_coach_policy(task, "auto")
+        return store.set_coach_status(task_id, "pending")
 
 
 @app.get("/api/session/{session_id:path}/plan", response_model=PlanResponse)
@@ -1161,6 +1532,41 @@ def _reload_sync_folder() -> None:
     _sync_folder = resolve_sync_folder()
 
 
+def _obsidian_settings(cfg: dict) -> dict:
+    value = cfg.get("obsidian", {})
+    if not isinstance(value, dict):
+        value = {}
+    enabled = bool(value.get("enabled", False))
+    vault_path = str(value.get("vault_path") or "")
+    task_folder = str(value.get("task_folder") or "AgentEye/Tasks")
+    if enabled:
+        _writer, status, _config = _obsidian_config()
+    else:
+        status = "disabled"
+    return {
+        "obsidian_enabled": enabled,
+        "obsidian_vault_path": vault_path,
+        "obsidian_task_folder": task_folder,
+        "obsidian_status": status,
+    }
+
+
+def _achievement_settings(cfg: dict) -> dict:
+    achievement = cfg.get("achievement", {})
+    coach = cfg.get("coach", {})
+    if not isinstance(achievement, dict):
+        achievement = {}
+    if not isinstance(coach, dict):
+        coach = {}
+    mode = str(coach.get("mode") or "ask")
+    if mode not in {"off", "ask", "auto"}:
+        mode = "ask"
+    return {
+        "achievement_ledger_path": str(achievement.get("ledger_path") or ACHIEVEMENT_LEDGER_PATH),
+        "coach_mode": mode,
+    }
+
+
 @app.get("/api/settings", response_model=SettingsResponse)
 def api_get_settings():
     """Return current dashboard settings."""
@@ -1176,6 +1582,8 @@ def api_get_settings():
         "sync_enabled": sync_enabled,
         "log_level": get_log_level(),
         "mtime_active_threshold": int(mtime_threshold),
+        **_obsidian_settings(cfg),
+        **_achievement_settings(cfg),
     }
 
 
@@ -1208,6 +1616,32 @@ async def api_put_settings(request: Request):
         except (TypeError, ValueError):
             pass
 
+    obsidian_updates = {
+        "obsidian_enabled": "enabled",
+        "obsidian_vault_path": "vault_path",
+        "obsidian_task_folder": "task_folder",
+    }
+    if any(key in body for key in obsidian_updates):
+        if "obsidian" not in cfg or not isinstance(cfg.get("obsidian"), dict):
+            cfg["obsidian"] = {}
+        for request_key, config_key in obsidian_updates.items():
+            if request_key in body:
+                cfg["obsidian"][config_key] = body[request_key]
+        _obsidian_snapshots.clear()
+
+    if "achievement_ledger_path" in body:
+        if "achievement" not in cfg or not isinstance(cfg.get("achievement"), dict):
+            cfg["achievement"] = {}
+        cfg["achievement"]["ledger_path"] = str(body["achievement_ledger_path"]).strip()
+
+    if "coach_mode" in body:
+        mode = str(body["coach_mode"])
+        if mode not in {"off", "ask", "auto"}:
+            return JSONResponse({"error": "coach_mode must be off, ask, or auto"}, status_code=400)
+        if "coach" not in cfg or not isinstance(cfg.get("coach"), dict):
+            cfg["coach"] = {}
+        cfg["coach"]["mode"] = mode
+
     _write_dashboard_config(cfg)
     _reload_sync_folder()
 
@@ -1220,6 +1654,8 @@ async def api_put_settings(request: Request):
         "sync_enabled": sync_enabled,
         "log_level": get_log_level(),
         "mtime_active_threshold": int(mtime_threshold),
+        **_obsidian_settings(cfg),
+        **_achievement_settings(cfg),
     }
 
 
