@@ -93,6 +93,17 @@ def test_default_agenteye_url_uses_packaged_default_port():
     assert agenteye["url"] == "http://127.0.0.1:5111/"
 
 
+def test_active_request_origin_overrides_stale_configured_agenteye_port():
+    result = inspect_control_plane(
+        {"stack": {"agenteye_url": "http://127.0.0.1:5112/"}},
+        agenteye_version="1.3.0",
+        active_agenteye_url="http://127.0.0.1:8088/",
+    )
+
+    agenteye = next(item for item in result["runtimes"] if item["name"] == "Agent Eye")
+    assert agenteye["url"] == "http://127.0.0.1:8088/"
+
+
 def test_missing_roots_do_not_probe_current_working_directory(tmp_path, monkeypatch):
     (tmp_path / ".obsidian").mkdir()
     (tmp_path / "bin").mkdir()

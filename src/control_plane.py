@@ -66,7 +66,10 @@ def _configured_path(value: Any) -> Path | None:
 
 
 def inspect_control_plane(
-    config: dict[str, Any], *, agenteye_version: str
+    config: dict[str, Any],
+    *,
+    agenteye_version: str,
+    active_agenteye_url: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Return safe status cards without exposing private local paths."""
     stack = config.get("stack", {})
@@ -74,7 +77,9 @@ def inspect_control_plane(
         stack = {}
 
     agenteye_url = (
-        _safe_dashboard_url(stack.get("agenteye_url")) or f"http://127.0.0.1:{DEFAULT_PORT}/"
+        _safe_dashboard_url(active_agenteye_url)
+        or _safe_dashboard_url(stack.get("agenteye_url"))
+        or f"http://127.0.0.1:{DEFAULT_PORT}/"
     )
     configured_coach_url = stack.get("coach_url")
     coach_url = _safe_dashboard_url(configured_coach_url)
