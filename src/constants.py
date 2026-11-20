@@ -33,6 +33,14 @@ COPILOT_DIR = os.path.join(os.path.expanduser("~"), ".copilot")
 SESSION_STATE_DIR = os.path.join(COPILOT_DIR, "session-state")
 SESSION_STORE_DB = os.path.join(COPILOT_DIR, "session-store.db")
 DASHBOARD_CONFIG_PATH = os.path.join(COPILOT_DIR, "dashboard-config.json")
+TASK_STORE_DB = os.path.join(COPILOT_DIR, "agenteye-tasks.db")
+ACHIEVEMENT_LEDGER_PATH = os.path.join(
+    COPILOT_DIR, "skills", "achievement-intake", "ACHIEVEMENT_LOG.md"
+)
+ACHIEVEMENT_INTAKE_OUTBOX = os.path.join(
+    COPILOT_DIR, "agenteye", "achievement-intake-requests.jsonl"
+)
+AI_COACH_OUTBOX = os.path.join(COPILOT_DIR, "agenteye", "ai-coach-requests.jsonl")
 DEFAULT_PLAN_FILES: tuple[str, ...] = ("PLAN.md", "TASK.md", "plan.md", "docs/PLAN.md")
 
 # Log directory uses OS-standard location via platformdirs:
@@ -191,6 +199,9 @@ SYNC_FOLDER_NAME = "AgentEye"
 
 SYNC_EXPORT_INTERVAL = 30
 """How often to export local sessions to the sync folder (seconds)."""
+
+TASK_SYNC_INTERVAL = 5
+"""How often to reconcile CLI tasks and publish state transitions (seconds)."""
 
 SYNC_STALE_THRESHOLD = 14400
 """Ignore remote machine data older than this (seconds). 4 hours."""

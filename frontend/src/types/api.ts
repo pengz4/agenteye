@@ -141,4 +141,70 @@ export interface DashboardSettings {
   sync_enabled: boolean;
   log_level: string;
   mtime_active_threshold: number;
+  obsidian_enabled: boolean;
+  obsidian_vault_path: string;
+  obsidian_task_folder: string;
+  obsidian_status: string;
+  achievement_ledger_path: string;
+  coach_mode: "off" | "ask" | "auto";
+}
+
+export interface RuntimeCard {
+  name: string;
+  status: string;
+  detail: string;
+  url: string | null;
+}
+
+export interface ControlPlaneOverview {
+  runtimes: RuntimeCard[];
+}
+
+export type AgentTaskStatus =
+  | "active"
+  | "awaiting_confirmation"
+  | "completed"
+  | "blocked"
+  | "merged";
+
+/** Durable logical task tracked across CLI session turns and calendar days. */
+export interface AgentTask {
+  id: string;
+  session_id: string;
+  source: "copilot" | "claude" | "scout";
+  title: string;
+  summary: string;
+  status: AgentTaskStatus;
+  cwd: string;
+  start_date: string;
+  last_activity_date: string;
+  last_turn_index: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  obsidian_path: string | null;
+  merged_into: string | null;
+  achievement_status:
+    | "not_candidate"
+    | "candidate"
+    | "pending_intake"
+    | "linked"
+    | "skipped";
+  achievement_source_key: string | null;
+  achievement_ref: string | null;
+  coach_status:
+    | "off"
+    | "needs_confirmation"
+    | "pending"
+    | "generated"
+    | "skipped";
+}
+
+export interface TaskSyncResult {
+  tasks: AgentTask[];
+  reconciled: number;
+  obsidian_synced: number;
+  obsidian_status: string;
+  achievement_linked: number;
+  coach_staged: number;
 }

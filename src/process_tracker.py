@@ -4,6 +4,7 @@ Uses pywin32 to map running sessions to terminal windows and focus them.
 Also detects session state (waiting/working), yolo mode, and MCP servers.
 """
 
+import base64
 import json
 import logging
 import os
@@ -312,26 +313,26 @@ def _command_basename(value: str) -> str:
 
 
 def _extract_resume_session_id(cmdline: str) -> str | None:
-    """Extract a --resume value from a command line, if present.
+    """Extract an explicit --resume or --session-id value.
 
     Supports space-separated and ``=``-separated values, with optional
     surrounding quotes.
     """
     args = _split_command_args(cmdline)
-    flag = "--resume"
-    prefix = f"{flag}="
-    for index, raw_arg in enumerate(args):
-        arg = _strip_arg_quotes(raw_arg)
-        if arg == flag:
-            if index + 1 >= len(args):
-                continue
-            session_id = _strip_arg_quotes(args[index + 1])
-            if session_id and not session_id.startswith("--"):
-                return session_id
-        elif arg.startswith(prefix):
-            session_id = _strip_arg_quotes(arg[len(prefix) :])
-            if session_id:
-                return session_id
+    for flag in ("--resume", "--session-id"):
+        prefix = f"{flag}="
+        for index, raw_arg in enumerate(args):
+            arg = _strip_arg_quotes(raw_arg)
+            if arg == flag:
+                if index + 1 >= len(args):
+                    continue
+                session_id = _strip_arg_quotes(args[index + 1])
+                if session_id and not session_id.startswith("--"):
+                    return session_id
+            elif arg.startswith(prefix):
+                session_id = _strip_arg_quotes(arg[len(prefix) :])
+                if session_id:
+                    return session_id
     return None
 
 
@@ -623,6 +624,14 @@ def _get_running_sessions_windows() -> dict[str, ProcessInfo]:
             mcp_servers=_parse_mcp_servers(cmd),
         )
 
+        sid = _extract_resume_session_id(cmd)
+        if sid:
+            if sid not in sessions:
+                sessions[sid] = proc_info
+            if proc_pid:
+                claimed_pids.add(proc_pid)
+            continue
+
         lock_sid = lock_map.get(proc_pid)
         if lock_sid:
             sessions[lock_sid] = proc_info
@@ -630,15 +639,8 @@ def _get_running_sessions_windows() -> dict[str, ProcessInfo]:
                 claimed_pids.add(proc_pid)
             continue
 
-        sid = _extract_resume_session_id(cmd)
-        if sid:
-            if sid not in sessions:
-                sessions[sid] = proc_info
-            if proc_pid:
-                claimed_pids.add(proc_pid)
-        else:
-            # No inuse lock or --resume flag — try to match by creation time
-            unmatched.append((proc, proc_info))
+        # No inuse lock or --resume flag — try to match by creation time
+        unmatched.append((proc, proc_info))
 
     # Match unclaimed processes to sessions by creation timestamp. Build the
     # lifecycle index lazily and reuse it for every eligible unmatched process.
@@ -771,19 +773,20 @@ def _get_running_sessions_unix() -> dict[str, ProcessInfo]:
             mcp_servers=_parse_mcp_servers(cmd),
         )
 
+        sid = _extract_resume_session_id(cmd)
+        if sid:
+            if sid not in sessions:
+                sessions[sid] = proc_info
+            claimed_pids.add(pid)
+            continue
+
         lock_sid = lock_map.get(pid)
         if lock_sid:
             sessions[lock_sid] = proc_info
             claimed_pids.add(pid)
             continue
 
-        sid = _extract_resume_session_id(cmd)
-        if sid:
-            if sid not in sessions:
-                sessions[sid] = proc_info
-            claimed_pids.add(pid)
-        else:
-            unmatched.append((ppid, lstart_str, proc_info))
+        unmatched.append((ppid, lstart_str, proc_info))
 
     # No inuse lock or --resume, so try timestamp matching unless the process is
     # a descendant of an already-claimed Copilot process in the same tree.
@@ -1514,6 +1517,121 @@ def _focus_session_window_macos(session_id, sessions: dict[str, ProcessInfo]):
         return False, f"Could not focus window: {e}"
 
 
+def _is_wsl() -> bool:
+    """Return whether the dashboard is running under Windows Subsystem for Linux."""
+    if sys.platform != "linux":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in open("/proc/sys/kernel/osrelease", encoding="utf-8").read().lower()
+    except OSError:
+        return False
+
+
+def _focus_session_window_wsl(
+    session_id: str, sessions: dict[str, ProcessInfo]
+) -> tuple[bool, str]:
+    """Select a WSL terminal tab through Windows UI Automation."""
+    if session_id not in sessions:
+        return False, "Session not found among running processes."
+    candidates = _get_session_match_candidates(session_id)
+    if not candidates:
+        return False, "No session summary or intent available for tab matching."
+
+    payload = base64.b64encode(json.dumps(candidates).encode()).decode()
+    script = rf"""
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class AgentEyeFocusWin32 {{
+ [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+ [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+ [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+}}
+"@
+$candidateJson = [System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String('{payload}')
+)
+$candidates = @($candidateJson | ConvertFrom-Json)
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::TabItem
+)
+$tabs = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+$bestTab = $null
+$bestScore = 0
+foreach ($tab in $tabs) {{
+    $name = $tab.Current.Name.ToLowerInvariant()
+    foreach ($candidate in $candidates) {{
+        $needle = [string]$candidate
+        if ([string]::IsNullOrWhiteSpace($needle)) {{ continue }}
+        $score = 0
+        if ($name -eq $needle) {{ $score = 3 }}
+        elseif ($name.StartsWith($needle)) {{ $score = 2 }}
+        elseif ($name.Contains($needle)) {{ $score = 1 }}
+        if ($score -gt $bestScore) {{
+            $bestScore = $score
+            $bestTab = $tab
+        }}
+    }}
+}}
+if ($null -eq $bestTab) {{
+    [Console]::Error.WriteLine("No matching tab: " + ($candidates -join ", "))
+    exit 1
+}}
+$pattern = $bestTab.GetCurrentPattern(
+    [System.Windows.Automation.SelectionItemPattern]::Pattern
+)
+$pattern.Select()
+$bestTab.SetFocus()
+$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+$window = $bestTab
+while (
+    $null -ne $window -and
+    $window.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window
+) {{
+    $window = $walker.GetParent($window)
+}}
+if ($null -eq $window -or $window.Current.NativeWindowHandle -eq 0) {{
+    [Console]::Error.WriteLine("Could not resolve the terminal window handle")
+    exit 1
+}}
+$hwnd = [IntPtr]::new($window.Current.NativeWindowHandle)
+[AgentEyeFocusWin32]::ShowWindowAsync($hwnd, 9) | Out-Null
+[AgentEyeFocusWin32]::BringWindowToTop($hwnd) | Out-Null
+[AgentEyeFocusWin32]::SwitchToThisWindow($hwnd, $true)
+[AgentEyeFocusWin32]::SetForegroundWindow($hwnd) | Out-Null
+Write-Output ("Focused: " + $bestTab.Current.Name)
+"""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                encoded,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=POWERSHELL_TIMEOUT,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, f"Could not invoke Windows Terminal focus: {exc}"
+    if result.returncode == 0:
+        return True, result.stdout.strip() or "Focused terminal tab."
+    error = result.stderr.strip() or result.stdout.strip() or "Unknown PowerShell error"
+    return False, error
+
+
 def focus_session_window(session_id):
     """
     Bring the terminal window running a session to the foreground.
@@ -1534,4 +1652,6 @@ def focus_session_window(session_id):
         return _focus_session_window_windows(session_id, sessions)
     if sys.platform == "darwin":
         return _focus_session_window_macos(session_id, sessions)
+    if _is_wsl():
+        return _focus_session_window_wsl(session_id, sessions)
     return False, "Window focus not supported on this platform."

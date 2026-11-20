@@ -166,3 +166,53 @@ class SettingsResponse(BaseModel):
     sync_enabled: bool = True
     log_level: str = "INFO"
     mtime_active_threshold: int = 120
+    obsidian_enabled: bool = False
+    obsidian_vault_path: str = ""
+    obsidian_task_folder: str = "AgentEye/Tasks"
+    obsidian_status: str = "disabled"
+    achievement_ledger_path: str = ""
+    coach_mode: str = "ask"
+
+
+# ── Tasks (/api/tasks) ──────────────────────────────────────────────────────
+
+
+class TaskResponse(BaseModel):
+    id: str
+    session_id: str
+    source: str
+    title: str
+    summary: str
+    status: str
+    cwd: str = ""
+    start_date: str
+    last_activity_date: str
+    last_turn_index: int
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+    obsidian_path: str | None = None
+    merged_into: str | None = None
+    achievement_status: str = "not_candidate"
+    achievement_source_key: str | None = None
+    achievement_ref: str | None = None
+    coach_status: str = "off"
+
+
+class TaskSyncResponse(BaseModel):
+    tasks: list[TaskResponse] = Field(default_factory=list)
+    reconciled: int = 0
+    obsidian_synced: int = 0
+    obsidian_status: str = "disabled"
+    achievement_linked: int = 0
+    coach_staged: int = 0
+
+
+class TaskSplitRequest(BaseModel):
+    title: str
+    turn_index: int | None = None
+
+
+class TaskMergeRequest(BaseModel):
+    target_id: str
+    source_id: str

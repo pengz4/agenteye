@@ -21,7 +21,17 @@ export default function HamburgerMenu() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const autostart = useAutostart();
-  const { settings, loading: settingsLoading, setSyncEnabled, setLogLevel, setMtimeThreshold } = useSettings();
+  const {
+    settings,
+    loading: settingsLoading,
+    setSyncEnabled,
+    setLogLevel,
+    setMtimeThreshold,
+    setObsidianEnabled,
+    setObsidianVaultPath,
+    setObsidianTaskFolder,
+    setCoachMode,
+  } = useSettings();
 
   const toggle = useCallback(() => setOpen((prev) => !prev), []);
 
@@ -94,6 +104,60 @@ export default function HamburgerMenu() {
                   onChange={(e) => setSyncEnabled(e.target.checked)}
                 />
                 <span className="toggle-slider" />
+              </label>
+            )}
+
+            {/* Obsidian task synchronization */}
+            {!settingsLoading && (
+              <label className="hamburger-item hamburger-toggle" role="menuitem">
+                <span>Obsidian tasks</span>
+                <input
+                  type="checkbox"
+                  checked={settings.obsidian_enabled}
+                  onChange={(e) => setObsidianEnabled(e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </label>
+            )}
+            {!settingsLoading && settings.obsidian_enabled && (
+              <>
+                <label className="hamburger-item hamburger-input" role="menuitem">
+                  <span>Vault path</span>
+                  <input
+                    aria-label="Obsidian Vault path"
+                    defaultValue={settings.obsidian_vault_path}
+                    placeholder="Auto-detect"
+                    onBlur={(e) => setObsidianVaultPath(e.target.value)}
+                  />
+                </label>
+                <label className="hamburger-item hamburger-input" role="menuitem">
+                  <span>Task folder</span>
+                  <input
+                    aria-label="Obsidian task folder"
+                    defaultValue={settings.obsidian_task_folder}
+                    onBlur={(e) => setObsidianTaskFolder(e.target.value)}
+                  />
+                </label>
+                <div className="hamburger-item" role="menuitem" style={{ opacity: 0.75 }}>
+                  Obsidian: {settings.obsidian_status}
+                </div>
+              </>
+            )}
+
+            {!settingsLoading && (
+              <label className="hamburger-item hamburger-select" role="menuitem">
+                <span>AI Coach after Achievement</span>
+                <select
+                  value={settings.coach_mode}
+                  aria-label="AI Coach mode"
+                  onChange={(e) =>
+                    setCoachMode(e.target.value as "off" | "ask" | "auto")
+                  }
+                >
+                  <option value="off">Off</option>
+                  <option value="ask">Ask</option>
+                  <option value="auto">Auto</option>
+                </select>
               </label>
             )}
 
