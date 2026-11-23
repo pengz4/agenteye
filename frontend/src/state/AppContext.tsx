@@ -32,7 +32,14 @@ import type { Session, ProcessMap } from "../types";
 
 // ── State shape ──────────────────────────────────────────────────────────────
 
-export type Tab = "active" | "previous" | "tasks" | "timeline" | "files";
+export type Tab =
+  | "active"
+  | "previous"
+  | "tasks"
+  | "memory"
+  | "obsidian"
+  | "timeline"
+  | "files";
 export type View = "tile" | "list";
 export type GroupBy = "none" | "project" | "machine";
 export type SortMode = "default" | "status_changed";

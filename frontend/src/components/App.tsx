@@ -26,6 +26,8 @@ import AutostartPopover from "./AutostartPopover";
 import { ToastContainer } from "./Toast";
 import TaskList from "./TaskList";
 import RuntimeOverview from "./RuntimeOverview";
+import MemoryWorkbench from "./MemoryWorkbench";
+import ObsidianWorkbench from "./ObsidianWorkbench";
 
 /** Version injected at build time — falls back to "dev" during development. */
 const INITIAL_VERSION = "dev";
@@ -48,7 +50,15 @@ function Dashboard() {
 
   // Handle URL hash on mount (e.g. #timeline)
   useEffect(() => {
-    const validTabs: Tab[] = ["active", "previous", "tasks", "timeline", "files"];
+    const validTabs: Tab[] = [
+      "active",
+      "previous",
+      "tasks",
+      "memory",
+      "obsidian",
+      "timeline",
+      "files",
+    ];
     const hashTab = location.hash.replace("#", "") as Tab;
     if (validTabs.includes(hashTab)) {
       dispatch({ type: "SET_TAB", tab: hashTab });
@@ -173,6 +183,20 @@ function Dashboard() {
         </div>
 
         {/* Timeline panel */}
+        <div
+          className={`tab-panel ${currentTab === "memory" ? "active" : ""}`}
+        >
+          {currentTab === "memory" && <MemoryWorkbench />}
+        </div>
+
+        <div
+          className={`tab-panel ${currentTab === "obsidian" ? "active" : ""}`}
+        >
+          {currentTab === "obsidian" && (
+            <ObsidianWorkbench onRetrySync={taskState.refresh} />
+          )}
+        </div>
+
         <div
           className={`tab-panel ${currentTab === "timeline" ? "active" : ""}`}
         >

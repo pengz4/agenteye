@@ -21,6 +21,8 @@ import type {
   AgentTask,
   TaskSyncResult,
   ControlPlaneOverview,
+  MemoryOverview,
+  ObsidianOverview,
 } from "../types";
 
 /** Read the auth token injected by the server into the HTML page. */
@@ -82,6 +84,14 @@ export function syncTasks(): Promise<TaskSyncResult> {
 
 export function fetchControlPlane(): Promise<ControlPlaneOverview> {
   return get<ControlPlaneOverview>("/api/control-plane");
+}
+
+export function fetchMemoryOverview(): Promise<MemoryOverview> {
+  return get<MemoryOverview>("/api/memory-overview");
+}
+
+export function fetchObsidianOverview(): Promise<ObsidianOverview> {
+  return get<ObsidianOverview>("/api/obsidian-overview");
 }
 
 export function confirmTask(id: string): Promise<AgentTask> {
