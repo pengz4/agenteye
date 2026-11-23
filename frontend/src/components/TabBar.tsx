@@ -47,6 +47,8 @@ export default function TabBar({ activeCount, previousCount, taskCount = 0 }: Ta
     { key: "active", label: "Active", icon: "⚡", count: activeCount, title: "Currently running sessions" },
     { key: "previous", label: "Previous", icon: "📋", count: previousCount, title: "Completed sessions from the last 5 days" },
     { key: "tasks", label: "Task Review", icon: "✅", count: taskCount, title: "Review, confirm, reopen, split, or merge logical tasks" },
+    { key: "memory", label: "Memory", icon: "◇", title: "Personal Memory health and recent activity" },
+    { key: "obsidian", label: "Obsidian", icon: "▤", title: "Vault, Daily Note, Task, and Achievement sync status" },
     { key: "timeline", label: "Timeline", icon: "📅", title: "Gantt-style view of session activity over the last 5 days" },
     { key: "files", label: "Files", icon: "📁", title: "Files most frequently edited across recent sessions" },
   ];

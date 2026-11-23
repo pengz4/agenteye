@@ -144,6 +144,8 @@ agenteye autostart-remove
 - **Background tasks** — shows count of running subagents per session
 - **Session details** — click any session to see checkpoints, recent tool output, references, and conversation history
 - **Task review queue** — tracks one logical task across multiple CLI turns and moves finished work into **Task Review** for explicit confirmation
+- **Memory workbench** — shows runtime/sync health, active-vs-archived memory counts, and safe recent activity without exposing memory bodies
+- **Obsidian workbench** — shows Vault/Git health, Daily Note readiness, Task/Achievement counts, and safe deep links without rendering note content
 - **Obsidian task sync** — optionally creates canonical task notes and compact links in Daily Notes without copying full transcripts
 - **Tile & List views** — compact card grid or detailed expandable rows
 - **9 color palettes** and light/dark mode

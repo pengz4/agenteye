@@ -7,6 +7,8 @@ automatic OpenAPI schema generation + Swagger UI.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 # ── Session list (/api/sessions) ─────────────────────────────────────────────
@@ -216,3 +218,66 @@ class TaskSplitRequest(BaseModel):
 class TaskMergeRequest(BaseModel):
     target_id: str
     source_id: str
+
+
+# ── Workbenches (/api/memory-overview, /api/obsidian-overview) ──────────────
+
+
+class MemorySyncSummary(BaseModel):
+    last_outcome: str = "unknown"
+    queue_count: int = 0
+    last_attempt_at: str = ""
+    last_successful_pull_at: str = ""
+    last_successful_push_at: str = ""
+
+
+class MemoryActivity(BaseModel):
+    timestamp: str
+    summary: str
+    action: str
+    trigger: str
+
+
+class MemoryEntrySummary(BaseModel):
+    id: str
+    kind: str
+    title: str
+    updated_at: str
+
+
+class MemoryOverviewResponse(BaseModel):
+    status: str
+    runtime_installed: bool = False
+    account_id: str = ""
+    device: str = ""
+    counts: dict[str, int] = Field(default_factory=dict)
+    sync: MemorySyncSummary = Field(default_factory=MemorySyncSummary)
+    today_captures: int = 0
+    recent_entries: list[MemoryEntrySummary] = Field(default_factory=list)
+    recent_activity: list[MemoryActivity] = Field(default_factory=list)
+
+
+class ObsidianGitSummary(BaseModel):
+    branch: str = ""
+    dirty_count: int = 0
+    last_commit: str = ""
+    last_commit_at: str = ""
+    status: str = "not_a_repository"
+
+
+class ObsidianNoteSummary(BaseModel):
+    name: str
+    relative_path: str
+    updated_at: str
+    open_url: str
+
+
+class ObsidianOverviewResponse(BaseModel):
+    status: str
+    vault_connected: bool = False
+    git: ObsidianGitSummary = Field(default_factory=ObsidianGitSummary)
+    today: dict[str, Any] = Field(default_factory=dict)
+    tasks: dict[str, int] = Field(default_factory=dict)
+    achievements: dict[str, int] = Field(default_factory=dict)
+    recent_notes: list[ObsidianNoteSummary] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)

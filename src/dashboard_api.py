@@ -65,8 +65,10 @@ from .constants import (
 )
 from .control_plane import inspect_control_plane
 from .grouping import get_group_name
+from .memory_workbench import get_memory_overview
 from .models import EventData, ProcessInfo, VersionCache
 from .obsidian_sync import ObsidianSync, ObsidianSyncConfig, discover_obsidian_vault
+from .obsidian_workbench import get_obsidian_overview
 from .process_tracker import (
     focus_session_window,
     get_recent_output,
@@ -77,6 +79,8 @@ from .schemas import (
     ActionResponse,
     AutostartStatusResponse,
     FileEntryResponse,
+    MemoryOverviewResponse,
+    ObsidianOverviewResponse,
     PlanResponse,
     ProcessResponse,
     ServerInfoResponse,
@@ -903,6 +907,21 @@ def api_control_plane(request: Request):
         _read_dashboard_config(),
         agenteye_version=__version__,
         active_agenteye_url=active_url,
+    )
+
+
+@app.get("/api/memory-overview", response_model=MemoryOverviewResponse)
+def api_memory_overview():
+    """Return a metadata-only Personal Memory workbench overview."""
+    return get_memory_overview(_read_dashboard_config())
+
+
+@app.get("/api/obsidian-overview", response_model=ObsidianOverviewResponse)
+def api_obsidian_overview():
+    """Return aggregate Vault, Git, task, and achievement status."""
+    return get_obsidian_overview(
+        _read_dashboard_config(),
+        tasks=_get_task_store().list(),
     )
 
 

@@ -50,6 +50,7 @@ export function useTasks() {
 
   return {
     tasks,
+    refresh,
     loading,
     error,
     reviewCount: tasks.filter((task) =>

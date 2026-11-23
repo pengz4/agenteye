@@ -160,6 +160,79 @@ export interface ControlPlaneOverview {
   runtimes: RuntimeCard[];
 }
 
+export interface MemorySyncSummary {
+  last_outcome: string;
+  queue_count: number;
+  last_attempt_at: string;
+  last_successful_pull_at: string;
+  last_successful_push_at: string;
+}
+
+export interface MemoryActivity {
+  timestamp: string;
+  summary: string;
+  action: string;
+  trigger: string;
+}
+
+export interface MemoryEntrySummary {
+  id: string;
+  kind: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface MemoryOverview {
+  status: string;
+  runtime_installed: boolean;
+  account_id: string;
+  device: string;
+  counts: Record<string, number>;
+  sync: MemorySyncSummary;
+  today_captures: number;
+  recent_entries: MemoryEntrySummary[];
+  recent_activity: MemoryActivity[];
+}
+
+export interface ObsidianNoteSummary {
+  name: string;
+  relative_path: string;
+  updated_at: string;
+  open_url: string;
+}
+
+export interface ObsidianOverview {
+  status: string;
+  vault_connected: boolean;
+  git: {
+    branch: string;
+    dirty_count: number;
+    last_commit: string;
+    last_commit_at: string;
+    status: string;
+  };
+  today: {
+    date: string;
+    daily_note_exists: boolean;
+    daily_note_name: string;
+  };
+  tasks: {
+    total: number;
+    active: number;
+    review: number;
+    completed: number;
+    cross_day: number;
+  };
+  achievements: {
+    candidate: number;
+    pending_intake: number;
+    linked: number;
+    skipped: number;
+  };
+  recent_notes: ObsidianNoteSummary[];
+  links: Record<string, string>;
+}
+
 export type AgentTaskStatus =
   | "active"
   | "awaiting_confirmation"
