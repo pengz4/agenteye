@@ -85,6 +85,23 @@ def test_reports_missing_intake_outbox_entry_for_retry(tmp_path):
     assert bridge.has_intake_request(task["achievement_source_key"]) is True
 
 
+def test_counts_only_current_pending_source_keys_in_intake_outbox(tmp_path):
+    bridge = AchievementBridge(
+        ledger_path=tmp_path / "ledger.md",
+        intake_outbox=tmp_path / "intake.jsonl",
+    )
+    first = _task()
+    bridge.enqueue_intake(first)
+    bridge.enqueue_intake(
+        _task(id="other", achievement_source_key="task:other"),
+    )
+
+    assert bridge.queued_intake_count({
+        first["achievement_source_key"],
+        "task:missing",
+    }) == 1
+
+
 def test_coach_policy_never_generates_on_off_or_unlinked_task(tmp_path):
     coach_outbox = tmp_path / "coach.jsonl"
     bridge = AchievementBridge(

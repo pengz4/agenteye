@@ -133,6 +133,7 @@ class FileEntryResponse(BaseModel):
 
 class VersionResponse(BaseModel):
     current: str
+    personal: str | None = None
     latest: str | None = None
     update_available: bool = False
 

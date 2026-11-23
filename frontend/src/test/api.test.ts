@@ -24,6 +24,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 beforeEach(() => {
   mockFetch.mockReset();
+  window.__DASHBOARD_TOKEN__ = "test-token";
 });
 
 function jsonResponse(data: unknown, status = 200) {
@@ -125,6 +126,33 @@ describe("API client", () => {
   });
 
   describe("error handling", () => {
+    it("refreshes an expired dashboard token after a 401 and retries once", async () => {
+      window.__DASHBOARD_TOKEN__ = "expired-token";
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ error: "Unauthorized" }, 401))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              '<script>window.__DASHBOARD_TOKEN__="fresh-token";</script>',
+            ),
+        })
+        .mockReturnValueOnce(jsonResponse([{ id: "recovered" }]));
+
+      await expect(fetchSessions()).resolves.toEqual([{ id: "recovered" }]);
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        "/api/sessions?token=expired-token",
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(2, "/");
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        3,
+        "/api/sessions?token=fresh-token",
+      );
+      expect(window.__DASHBOARD_TOKEN__).toBe("fresh-token");
+    });
+
     it("throws on non-200 responses", async () => {
       mockFetch.mockReturnValue(jsonResponse({}, 503));
       await expect(fetchSessions()).rejects.toThrow("503");

@@ -23,6 +23,7 @@ export {
   splitTask,
   mergeTasks,
   fetchControlPlane,
+  startCoach,
   fetchMemoryOverview,
   fetchObsidianOverview,
   requestAchievementReview,

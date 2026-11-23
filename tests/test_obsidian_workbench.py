@@ -81,6 +81,7 @@ def test_obsidian_overview_aggregates_vault_git_daily_task_and_achievement_state
         "linked": 1,
         "skipped": 1,
         "pending_intake": 0,
+        "queued_intake": 0,
     }
     assert result["links"]["daily_note"].startswith("obsidian://open?")
     assert result["links"]["achievements"].startswith("obsidian://open?")
@@ -174,3 +175,28 @@ def test_recent_notes_uses_configured_task_and_daily_folders(tmp_path):
     relative_paths = {note["relative_path"] for note in result["recent_notes"]}
     assert "Agent/Tasks/custom-task.md" in relative_paths
     assert "Journal/Daily/2026-11-23.md" in relative_paths
+
+
+def test_obsidian_overview_returns_fast_while_git_refreshes_in_background(tmp_path):
+    vault = tmp_path / "Obsidian Vault"
+    (vault / ".obsidian").mkdir(parents=True)
+    (vault / ".git").mkdir()
+    (vault / ".obsidian" / "daily-notes.json").write_text(
+        json.dumps({"folder": "", "format": "YYYY-MM-DD"}),
+        encoding="utf-8",
+    )
+    with patch("src.obsidian_workbench.threading.Thread") as thread:
+        result = get_obsidian_overview(
+            {
+                "obsidian": {"enabled": True},
+                "stack": {"obsidian_vault": str(vault)},
+            },
+            tasks=[],
+            now=datetime(2026, 11, 23, 10, tzinfo=UTC),
+            git_async=True,
+        )
+
+    assert result["status"] == "connected"
+    assert result["git"]["status"] == "refreshing"
+    thread.assert_called_once()
+    thread.return_value.start.assert_called_once()

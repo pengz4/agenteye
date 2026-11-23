@@ -97,6 +97,11 @@ class AchievementBridge:
         with self._lock:
             return source_key in self._read_keys(self.intake_outbox)
 
+    def queued_intake_count(self, source_keys: set[str]) -> int:
+        """Count current task requests present in the idempotent intake outbox."""
+        with self._lock:
+            return len(source_keys & self._read_keys(self.intake_outbox))
+
     def apply_coach_policy(self, task: dict[str, Any], mode: str) -> str:
         """Return the next Coach state and optionally queue one downstream request."""
         if mode not in {"off", "ask", "auto"}:

@@ -44,6 +44,27 @@ describe("TaskList", () => {
     expect(screen.getByText("Build the dashboard")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm complete" }));
     expect(confirm).toHaveBeenCalledWith("task-1");
+    const status = screen.getByRole("status", { name: "Task status: Needs review" });
+    expect(status).toHaveClass("task-status-review");
+  });
+
+  it("shows and disables a task while its action is processing", () => {
+    render(
+      <TaskList
+        tasks={[task()]}
+        pendingActions={{ "task-1": "Confirming…" }}
+        onConfirm={vi.fn()}
+        onReopen={vi.fn()}
+        onSplit={vi.fn()}
+        onMerge={vi.fn()}
+      />,
+    );
+
+    const confirm = screen.getByRole("button", { name: "Confirming…" });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Split into new task" })).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Task action: Confirming…" }))
+      .toHaveTextContent("Confirming…");
   });
 
   it("lets a completed task be reopened", () => {
@@ -157,6 +178,9 @@ describe("TaskList", () => {
       "Completed oldest",
       "Completed newest",
     ]);
+    expect(screen.getAllByText("Completed")).toHaveLength(2);
+    expect(screen.getByRole("status", { name: "Task status: Blocked" }))
+      .toHaveClass("task-status-blocked");
   });
 
   it("keeps candidate intake automatic and only offers skip", () => {
