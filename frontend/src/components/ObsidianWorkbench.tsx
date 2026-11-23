@@ -44,6 +44,33 @@ export default function ObsidianWorkbench({
     };
   }, [supplied]);
 
+  useEffect(() => {
+    if (overview?.git.status !== "refreshing") return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      fetchObsidianOverview()
+        .then((result) => {
+          if (active) {
+            setOverview(result);
+            setError(null);
+          }
+        })
+        .catch((caught) => {
+          if (active) {
+            setError(
+              caught instanceof Error
+                ? caught.message
+                : "Obsidian overview failed",
+            );
+          }
+        });
+    }, 1000);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [overview]);
+
   if (!overview) {
     return <div className="empty-state" aria-busy={!error}>{error || "Loading Obsidian…"}</div>;
   }
@@ -116,6 +143,7 @@ export default function ObsidianWorkbench({
           <div className="workbench-list">
             <div className="workbench-row"><span>Candidate</span><strong>{overview.achievements.candidate}</strong></div>
             <div className="workbench-row"><span>Pending intake</span><strong>{overview.achievements.pending_intake}</strong></div>
+            <div className="workbench-row"><span>Queued for intake</span><strong>{overview.achievements.queued_intake}</strong></div>
             <div className="workbench-row"><span>Linked</span><strong>{overview.achievements.linked}</strong></div>
             <div className="workbench-row"><span>Skipped</span><strong>{overview.achievements.skipped}</strong></div>
           </div>

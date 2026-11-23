@@ -5,11 +5,18 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
+import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+GIT_CACHE_TTL_SECONDS = 30
+_git_summaries: dict[str, tuple[float, dict[str, Any]]] = {}
+_git_refreshing: set[str] = set()
+_git_lock = threading.Lock()
 
 
 def _daily_config(vault: Path) -> tuple[str, str]:
@@ -102,6 +109,45 @@ def _git_summary(vault: Path) -> dict[str, Any]:
     return summary
 
 
+def _refresh_git_summary(vault: Path, key: str) -> None:
+    summary = _git_summary(vault)
+    with _git_lock:
+        _git_summaries[key] = (time.monotonic(), summary)
+        _git_refreshing.discard(key)
+
+
+def _empty_git_summary() -> dict[str, Any]:
+    return {
+        "branch": "",
+        "dirty_count": 0,
+        "last_commit": "",
+        "last_commit_at": "",
+        "status": "refreshing",
+    }
+
+
+def _cached_git_summary(vault: Path) -> dict[str, Any]:
+    key = str(vault.resolve())
+    now = time.monotonic()
+    with _git_lock:
+        cached = _git_summaries.get(key)
+        if cached is not None and now - cached[0] < GIT_CACHE_TTL_SECONDS:
+            return dict(cached[1])
+        snapshot = dict(cached[1]) if cached is not None else _empty_git_summary()
+        snapshot["status"] = "refreshing"
+        should_refresh = key not in _git_refreshing
+        if should_refresh:
+            _git_refreshing.add(key)
+    if should_refresh:
+        threading.Thread(
+            target=_refresh_git_summary,
+            args=(vault, key),
+            daemon=True,
+            name="agenteye-obsidian-git",
+        ).start()
+    return snapshot
+
+
 def _safe_vault_folder(vault: Path, folder: str) -> Path | None:
     path = Path(folder)
     if not folder or path.is_absolute() or ".." in path.parts:
@@ -158,6 +204,8 @@ def get_obsidian_overview(
     *,
     tasks: list[dict[str, Any]],
     now: datetime | None = None,
+    git_async: bool = False,
+    queued_intake: int = 0,
 ) -> dict[str, Any]:
     """Return Vault/Git/task aggregates without note bodies or absolute paths."""
     obsidian = config.get("obsidian", {})
@@ -186,6 +234,7 @@ def get_obsidian_overview(
             "achievements": {
                 "candidate": 0,
                 "pending_intake": 0,
+                "queued_intake": 0,
                 "linked": 0,
                 "skipped": 0,
             },
@@ -198,7 +247,7 @@ def get_obsidian_overview(
         return {
             "status": "invalid_vault",
             "vault_connected": False,
-            "git": _git_summary(vault),
+            "git": _cached_git_summary(vault) if git_async else _git_summary(vault),
             "today": {
                 "date": (now or datetime.now(UTC)).date().isoformat(),
                 "daily_note_exists": False,
@@ -208,6 +257,7 @@ def get_obsidian_overview(
             "achievements": {
                 "candidate": 0,
                 "pending_intake": 0,
+                "queued_intake": 0,
                 "linked": 0,
                 "skipped": 0,
             },
@@ -240,7 +290,7 @@ def get_obsidian_overview(
     return {
         "status": "connected" if daily_relative is not None else "invalid_configuration",
         "vault_connected": True,
-        "git": _git_summary(vault),
+        "git": _cached_git_summary(vault) if git_async else _git_summary(vault),
         "today": {
             "date": today,
             "daily_note_exists": daily_exists,
@@ -256,6 +306,7 @@ def get_obsidian_overview(
         "achievements": {
             "candidate": achievement_counts["candidate"],
             "pending_intake": achievement_counts["pending_intake"],
+            "queued_intake": queued_intake,
             "linked": achievement_counts["linked"],
             "skipped": achievement_counts["skipped"],
         },

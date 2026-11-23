@@ -2,7 +2,7 @@
  * Hook tests — use renderHook from @testing-library/react.
  */
 
-import { renderHook, act, render } from "@testing-library/react";
+import { renderHook, act, render, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { STORAGE_KEY_MODE, STORAGE_KEY_PALETTE } from "../constants";
 
@@ -22,18 +22,181 @@ vi.stubGlobal("fetch", mockFetch);
 
 beforeEach(() => {
   Object.keys(store).forEach((k) => delete store[k]);
+  window.history.replaceState({}, "", "/");
   mockFetch.mockReset();
 });
 
 // ── useTheme ─────────────────────────────────────────────────────────────────
 
 import { useTheme } from "../hooks/useTheme";
+import { useTasks } from "../hooks/useTasks";
+import * as Toast from "../components/Toast";
 
 describe("useTheme", () => {
   it("defaults to dark mode and default palette", () => {
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme.mode).toBe("dark");
     expect(result.current.theme.palette).toBe("default");
+  });
+
+  describe("useTasks", () => {
+    it("locks one task against repeated actions until completion", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve({
+          tasks: [],
+          reconciled: 0,
+          obsidian_synced: 0,
+          obsidian_status: "connected",
+          achievement_linked: 0,
+          coach_staged: 0,
+        }),
+      });
+      const { result } = renderHook(() => useTasks());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      let releaseConfirm: ((value: unknown) => void) | undefined;
+      mockFetch
+        .mockReturnValueOnce(new Promise((resolve) => {
+          releaseConfirm = resolve;
+        }))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve({
+            tasks: [],
+            reconciled: 0,
+            obsidian_synced: 0,
+            obsidian_status: "connected",
+            achievement_linked: 0,
+            coach_staged: 0,
+          }),
+        });
+
+      let first: Promise<void>;
+      act(() => {
+        first = result.current.confirm("task-1");
+        void result.current.confirm("task-1");
+      });
+      expect(result.current.pendingActions).toEqual({ "task-1": "Confirming…" });
+      const confirmCalls = mockFetch.mock.calls.filter(
+        ([url]) => String(url).includes("/api/task/task-1/confirm"),
+      );
+      expect(confirmCalls).toHaveLength(1);
+
+      await act(async () => {
+        releaseConfirm?.({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve({ id: "task-1" }),
+        });
+        await first!;
+      });
+      expect(result.current.pendingActions).toEqual({});
+    });
+
+    it("restores the task controls and reports the server failure detail", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve({
+          tasks: [],
+          reconciled: 0,
+          obsidian_synced: 0,
+          obsidian_status: "connected",
+          achievement_linked: 0,
+          coach_staged: 0,
+        }),
+      });
+      const { result } = renderHook(() => useTasks());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const toast = vi.spyOn(Toast, "showToast").mockImplementation(() => {});
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        json: () => Promise.resolve({}),
+      });
+
+      await act(async () => {
+        await result.current.confirm("task-1");
+      });
+
+      expect(result.current.pendingActions).toEqual({});
+      expect(toast).toHaveBeenCalledWith(
+        "Task update failed: 503 Service Unavailable",
+        "error",
+      );
+      toast.mockRestore();
+    });
+
+    it("locks both tasks while a merge is in flight", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve({
+          tasks: [],
+          reconciled: 0,
+          obsidian_synced: 0,
+          obsidian_status: "connected",
+          achievement_linked: 0,
+          coach_staged: 0,
+        }),
+      });
+      const { result } = renderHook(() => useTasks());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let releaseMerge: ((value: unknown) => void) | undefined;
+      mockFetch.mockReturnValueOnce(new Promise((resolve) => {
+        releaseMerge = resolve;
+      }));
+
+      let merge: Promise<void>;
+      act(() => {
+        merge = result.current.merge("target", "source");
+      });
+      expect(result.current.pendingActions).toEqual({
+        target: "Merging…",
+        source: "Merging…",
+      });
+      act(() => {
+        void result.current.confirm("source");
+      });
+      expect(
+        mockFetch.mock.calls.filter(([url]) =>
+          String(url).includes("/api/task/source/confirm"),
+        ),
+      ).toHaveLength(0);
+
+      await act(async () => {
+        releaseMerge?.({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve({ id: "target" }),
+        });
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: () => Promise.resolve({
+            tasks: [],
+            reconciled: 0,
+            obsidian_synced: 0,
+            obsidian_status: "connected",
+            achievement_linked: 0,
+            coach_staged: 0,
+          }),
+        });
+        await merge!;
+      });
+      expect(result.current.pendingActions).toEqual({});
+    });
   });
 
   it("reads initial mode from localStorage", () => {
@@ -46,6 +209,22 @@ describe("useTheme", () => {
     store[STORAGE_KEY_PALETTE] = "ocean";
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme.palette).toBe("ocean");
+  });
+
+  it("imports a valid Coach theme handoff and persists it", () => {
+    window.history.replaceState({}, "", "/?mode=light&palette=forest");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toEqual({ mode: "light", palette: "forest" });
+    expect(store[STORAGE_KEY_MODE]).toBe("light");
+    expect(store[STORAGE_KEY_PALETTE]).toBe("forest");
+  });
+
+  it("rejects invalid Coach theme handoff values", () => {
+    store[STORAGE_KEY_MODE] = "light";
+    store[STORAGE_KEY_PALETTE] = "ocean";
+    window.history.replaceState({}, "", "/?mode=sepia&palette=rainbow");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toEqual({ mode: "light", palette: "ocean" });
   });
 
   it("toggleMode switches from dark to light", () => {

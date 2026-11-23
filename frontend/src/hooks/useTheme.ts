@@ -24,11 +24,30 @@ const VALID_PALETTES: Palette[] = [
 ];
 
 function readTheme(): ThemeState {
-  const rawMode = localStorage.getItem(STORAGE_KEY_MODE) as Mode | null;
-  const rawPalette = localStorage.getItem(STORAGE_KEY_PALETTE) as Palette | null;
+  const params = new URLSearchParams(window.location.search);
+  const handoffMode = params.get("mode") as Mode | null;
+  const handoffPalette = params.get("palette") as Palette | null;
+  const storedMode = localStorage.getItem(STORAGE_KEY_MODE) as Mode | null;
+  const storedPalette = localStorage.getItem(STORAGE_KEY_PALETTE) as Palette | null;
+  const rawMode =
+    handoffMode && VALID_MODES.includes(handoffMode) ? handoffMode : storedMode;
+  const rawPalette =
+    handoffPalette && VALID_PALETTES.includes(handoffPalette)
+      ? handoffPalette
+      : storedPalette;
+  const mode = rawMode && VALID_MODES.includes(rawMode) ? rawMode : "dark";
+  const palette =
+    rawPalette && VALID_PALETTES.includes(rawPalette) ? rawPalette : "default";
+
+  if (handoffMode && VALID_MODES.includes(handoffMode)) {
+    localStorage.setItem(STORAGE_KEY_MODE, mode);
+  }
+  if (handoffPalette && VALID_PALETTES.includes(handoffPalette)) {
+    localStorage.setItem(STORAGE_KEY_PALETTE, palette);
+  }
   return {
-    mode: rawMode && VALID_MODES.includes(rawMode) ? rawMode : "dark",
-    palette: rawPalette && VALID_PALETTES.includes(rawPalette) ? rawPalette : "default",
+    mode,
+    palette,
   };
 }
 

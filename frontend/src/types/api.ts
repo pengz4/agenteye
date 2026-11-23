@@ -117,6 +117,7 @@ export interface FileFrequency {
 /** GET /api/version response. */
 export interface VersionInfo {
   current: string;
+  personal?: string | null;
   latest: string | null;
   update_available: boolean;
 }
@@ -226,6 +227,7 @@ export interface ObsidianOverview {
   achievements: {
     candidate: number;
     pending_intake: number;
+    queued_intake: number;
     linked: number;
     skipped: number;
   };

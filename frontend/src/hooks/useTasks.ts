@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   confirmTask,
   mergeTasks,
@@ -19,6 +19,8 @@ export function useTasks() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingActions, setPendingActions] = useState<Record<string, string>>({});
+  const pendingTaskIds = useRef(new Set<string>());
 
   const refresh = useCallback(async () => {
     try {
@@ -38,13 +40,34 @@ export function useTasks() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const runAction = useCallback(async (action: () => Promise<AgentTask>, success: string) => {
+  const runAction = useCallback(async (
+    id: string,
+    label: string,
+    action: () => Promise<AgentTask>,
+    success: string,
+    relatedIds: string[] = [],
+  ) => {
+    const lockedIds = [...new Set([id, ...relatedIds])];
+    if (lockedIds.some((taskId) => pendingTaskIds.current.has(taskId))) return;
+    lockedIds.forEach((taskId) => pendingTaskIds.current.add(taskId));
+    setPendingActions((current) => ({
+      ...current,
+      ...Object.fromEntries(lockedIds.map((taskId) => [taskId, label])),
+    }));
     try {
       await action();
       await refresh();
       showToast(success, "success");
-    } catch {
-      showToast("Task update failed", "error");
+    } catch (caught) {
+      const detail = caught instanceof Error ? `: ${caught.message}` : "";
+      showToast(`Task update failed${detail}`, "error");
+    } finally {
+      lockedIds.forEach((taskId) => pendingTaskIds.current.delete(taskId));
+      setPendingActions((current) => {
+        const next = { ...current };
+        lockedIds.forEach((taskId) => delete next[taskId]);
+        return next;
+      });
     }
   }, [refresh]);
 
@@ -53,23 +76,42 @@ export function useTasks() {
     refresh,
     loading,
     error,
+    pendingActions,
     reviewCount: tasks.filter((task) =>
       task.status === "awaiting_confirmation" ||
       task.status === "blocked" ||
       (task.status === "completed" && task.achievement_status === "candidate") ||
       task.coach_status === "needs_confirmation"
     ).length,
-    confirm: (id: string) => runAction(() => confirmTask(id), "Task confirmed"),
-    reopen: (id: string) => runAction(() => reopenTask(id), "Task reopened"),
+    confirm: (id: string) =>
+      runAction(id, "Confirming…", () => confirmTask(id), "Task confirmed"),
+    reopen: (id: string) =>
+      runAction(id, "Reopening…", () => reopenTask(id), "Task reopened"),
     split: (id: string, title: string) =>
-      runAction(() => splitTask(id, title), "Task split"),
+      runAction(id, "Splitting…", () => splitTask(id, title), "Task split"),
     merge: (targetId: string, sourceId: string) =>
-      runAction(() => mergeTasks(targetId, sourceId), "Tasks merged"),
+      runAction(
+        targetId,
+        "Merging…",
+        () => mergeTasks(targetId, sourceId),
+        "Tasks merged",
+        [sourceId],
+      ),
     requestAchievement: (id: string) =>
-      runAction(() => requestAchievementReview(id), "Achievement review requested"),
+      runAction(
+        id,
+        "Requesting review…",
+        () => requestAchievementReview(id),
+        "Achievement review requested",
+      ),
     skipAchievement: (id: string) =>
-      runAction(() => skipAchievement(id), "Achievement skipped"),
+      runAction(id, "Skipping…", () => skipAchievement(id), "Achievement skipped"),
     requestCoach: (id: string) =>
-      runAction(() => requestCoachPractice(id), "Coach practice requested"),
+      runAction(
+        id,
+        "Generating practice…",
+        () => requestCoachPractice(id),
+        "Coach practice requested",
+      ),
   };
 }

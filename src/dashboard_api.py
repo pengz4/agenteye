@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .__version__ import __version__
+from .__version__ import __personal_version__, __version__
 from .achievement_bridge import AchievementBridge
 from .claude_code import (
     SESSION_ID_PREFIX as CC_PREFIX,
@@ -63,7 +63,7 @@ from .constants import (
     TASK_SYNC_INTERVAL,
     VERSION_CACHE_TTL,
 )
-from .control_plane import inspect_control_plane
+from .control_plane import CoachStartError, inspect_control_plane, start_coach
 from .grouping import get_group_name
 from .memory_workbench import get_memory_overview
 from .models import EventData, ProcessInfo, VersionCache
@@ -906,8 +906,21 @@ def api_control_plane(request: Request):
     return inspect_control_plane(
         _read_dashboard_config(),
         agenteye_version=__version__,
+        personal_version=__personal_version__,
         active_agenteye_url=active_url,
     )
+
+
+@app.post("/api/coach/start")
+def api_start_coach():
+    """Start the configured local AI Coach dashboard if it is offline."""
+    try:
+        return start_coach(_read_dashboard_config())
+    except (CoachStartError, OSError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "coach_start_failed", "detail": str(exc)},
+            status_code=503,
+        )
 
 
 @app.get("/api/memory-overview", response_model=MemoryOverviewResponse)
@@ -919,9 +932,17 @@ def api_memory_overview():
 @app.get("/api/obsidian-overview", response_model=ObsidianOverviewResponse)
 def api_obsidian_overview():
     """Return aggregate Vault, Git, task, and achievement status."""
+    tasks = _get_task_store().list()
+    pending_keys = {
+        str(task["achievement_source_key"])
+        for task in tasks
+        if task.get("achievement_status") == "pending_intake" and task.get("achievement_source_key")
+    }
     return get_obsidian_overview(
         _read_dashboard_config(),
-        tasks=_get_task_store().list(),
+        tasks=tasks,
+        git_async=True,
+        queued_intake=_get_achievement_bridge().queued_intake_count(pending_keys),
     )
 
 
@@ -1322,6 +1343,7 @@ def api_version():
         ):
             return {
                 "current": __version__,
+                "personal": __personal_version__,
                 "latest": _version_cache.latest,
                 "update_available": _version_cache.update_available,
             }
@@ -1359,6 +1381,7 @@ def api_version():
         _version_cache.checked_at = now
     return {
         "current": __version__,
+        "personal": __personal_version__,
         "latest": latest,
         "update_available": update_available,
     }

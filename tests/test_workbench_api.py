@@ -56,6 +56,7 @@ def test_obsidian_overview_endpoint_uses_existing_tasks(client):
         "achievements": {
             "candidate": 0,
             "pending_intake": 0,
+            "queued_intake": 0,
             "linked": 1,
             "skipped": 0,
         },
