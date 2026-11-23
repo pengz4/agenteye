@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import MemoryWorkbench from "../components/MemoryWorkbench";
 import ObsidianWorkbench from "../components/ObsidianWorkbench";
@@ -81,7 +81,13 @@ describe("ObsidianWorkbench", () => {
             daily_note_name: "2026-11-23.md",
           },
           tasks: { total: 8, active: 2, review: 3, completed: 5, cross_day: 1 },
-          achievements: { candidate: 2, pending_intake: 1, linked: 4, skipped: 1 },
+          achievements: {
+            candidate: 2,
+            pending_intake: 1,
+            queued_intake: 1,
+            linked: 4,
+            skipped: 1,
+          },
           recent_notes: [
             {
               name: "task-dashboard",
@@ -102,6 +108,7 @@ describe("ObsidianWorkbench", () => {
 
     expect(screen.getByText("Obsidian Health")).toBeInTheDocument();
     expect(screen.getByText("Dirty files")).toBeInTheDocument();
+    expect(screen.getByText("Queued for intake")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open today note" }));
     expect(open).toHaveBeenCalledWith(
       expect.stringContaining("2026-11-23"),
@@ -109,6 +116,57 @@ describe("ObsidianWorkbench", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Retry task sync" }));
     expect(retry).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("polls a refreshing Git summary without holding the page in loading state", async () => {
+    const base = {
+      status: "connected",
+      vault_connected: true,
+      git: {
+        branch: "",
+        dirty_count: 0,
+        last_commit: "",
+        last_commit_at: "",
+        status: "refreshing",
+      },
+      today: {
+        date: "2026-11-23",
+        daily_note_exists: true,
+        daily_note_name: "2026-11-23.md",
+      },
+      tasks: { total: 1, active: 0, review: 1, completed: 0, cross_day: 0 },
+      achievements: {
+        candidate: 0,
+        pending_intake: 0,
+        queued_intake: 0,
+        linked: 0,
+        skipped: 0,
+      },
+      recent_notes: [],
+      links: { vault: "obsidian://open?vault=Obsidian%20Vault" },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: () => Promise.resolve({
+        ...base,
+        git: {
+          ...base.git,
+          branch: "main",
+          dirty_count: 2,
+          last_commit: "abc1234",
+          status: "configured",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ObsidianWorkbench overview={base} />);
+
+    expect(screen.queryByText("Loading Obsidian…")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 2500 });
+    expect(await screen.findByText("main")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 });

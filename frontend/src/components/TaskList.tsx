@@ -3,6 +3,7 @@ import type { AgentTask } from "../types";
 
 interface TaskListProps {
   tasks: AgentTask[];
+  pendingActions?: Record<string, string>;
   onConfirm: (id: string) => void;
   onReopen: (id: string) => void;
   onSplit: (id: string, title: string) => void;
@@ -12,9 +13,21 @@ interface TaskListProps {
   onRequestCoach?: (id: string) => void;
 }
 
+const TASK_STATUS: Record<
+  AgentTask["status"],
+  { label: string; tone: "review" | "blocked" | "completed" | "active" | "neutral" }
+> = {
+  active: { label: "Active", tone: "active" },
+  awaiting_confirmation: { label: "Needs review", tone: "review" },
+  blocked: { label: "Blocked", tone: "blocked" },
+  completed: { label: "Completed", tone: "completed" },
+  merged: { label: "Merged", tone: "neutral" },
+};
+
 function TaskCard({
   task,
   tasks,
+  pendingActions = {},
   onConfirm,
   onReopen,
   onSplit,
@@ -23,6 +36,9 @@ function TaskCard({
   onSkipAchievement,
   onRequestCoach,
 }: TaskListProps & { task: AgentTask }) {
+  const pendingLabel = pendingActions[task.id];
+  const isPending = Boolean(pendingLabel);
+  const status = TASK_STATUS[task.status];
   const mergeOptions = tasks.filter(
     (candidate) =>
       candidate.id !== task.id &&
@@ -77,35 +93,51 @@ function TaskCard({
           )}
         </div>
         <span
-          className={`state-badge state-${task.status}`}
-          style={{ height: "fit-content", whiteSpace: "nowrap" }}
+          className={`task-status-pill task-status-${status.tone}`}
+          role="status"
+          aria-label={`Task status: ${status.label}`}
         >
-          {task.status.replace(/_/g, " ")}
+          <span className="task-status-dot" aria-hidden="true" />
+          {status.label}
         </span>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+        {isPending && (
+          <div
+            className="task-pending-status"
+            role="status"
+            aria-label={`Task action: ${pendingLabel}`}
+            aria-live="polite"
+          >
+            <span className="task-pending-spinner" aria-hidden="true" />
+            {pendingLabel}
+          </div>
+        )}
         {task.status === "completed" ? (
           <button
             className="view-btn"
             aria-label="Reopen task"
             onClick={() => onReopen(task.id)}
+            disabled={isPending}
           >
-            Reopen
+            {pendingLabel || "Reopen"}
           </button>
         ) : (
           <button
             className="view-btn"
-            aria-label="Confirm complete"
+            aria-label={pendingLabel || "Confirm complete"}
             onClick={() => onConfirm(task.id)}
+            disabled={isPending}
           >
-            Confirm complete
+            {pendingLabel || "Confirm complete"}
           </button>
         )}
         <button
           className="view-btn"
           aria-label="Split into new task"
           onClick={split}
+          disabled={isPending}
         >
           Split
         </button>
@@ -114,6 +146,7 @@ function TaskCard({
             className="palette-select"
             aria-label="Merge with task"
             defaultValue=""
+            disabled={isPending}
             onChange={(event) => {
               if (event.target.value) onMerge(task.id, event.target.value);
             }}
@@ -133,6 +166,7 @@ function TaskCard({
                 className="view-btn"
                 aria-label="Skip achievement"
                 onClick={() => onSkipAchievement?.(task.id)}
+                disabled={isPending}
               >
                 Skip
               </button>
@@ -144,6 +178,7 @@ function TaskCard({
               className="view-btn"
               aria-label="Review achievement again"
               onClick={() => onRequestAchievement?.(task.id)}
+              disabled={isPending}
             >
               Review Again
             </button>
@@ -154,6 +189,7 @@ function TaskCard({
               className="view-btn"
               aria-label="Generate coach practice"
               onClick={() => onRequestCoach?.(task.id)}
+              disabled={isPending}
             >
               Generate Coach Practice
             </button>

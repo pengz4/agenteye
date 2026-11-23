@@ -36,23 +36,56 @@ function withToken(url: string): string {
   return `${url}${sep}token=${encodeURIComponent(getToken())}`;
 }
 
+let tokenRefresh: Promise<void> | null = null;
+
+async function refreshDashboardToken(): Promise<void> {
+  if (tokenRefresh) return tokenRefresh;
+  tokenRefresh = (async () => {
+    const response = await fetch("/");
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const html = await response.text();
+    const match = html.match(/window\.__DASHBOARD_TOKEN__\s*=\s*"([^"]+)"/);
+    if (!match?.[1]) throw new Error("Dashboard token was not present");
+    window.__DASHBOARD_TOKEN__ = match[1];
+  })();
+  try {
+    await tokenRefresh;
+  } finally {
+    tokenRefresh = null;
+  }
+}
+
+function fetchAuthenticated(url: string, init?: RequestInit): Promise<Response> {
+  const target = withToken(url);
+  return init === undefined ? fetch(target) : fetch(target, init);
+}
+
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  let response = await fetchAuthenticated(url, init);
+  if (response.status === 401) {
+    await refreshDashboardToken();
+    response = await fetchAuthenticated(url, init);
+  }
+  return response;
+}
+
 /** Generic GET helper — throws on non-2xx responses. */
 async function get<T>(url: string): Promise<T> {
-  const resp = await fetch(withToken(url));
+  const resp = await request(url);
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
   return resp.json() as Promise<T>;
 }
 
 /** Generic POST helper — throws on non-2xx responses. */
 async function post<T>(url: string): Promise<T> {
-  const resp = await fetch(withToken(url), { method: "POST" });
+  const resp = await request(url, { method: "POST" });
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
   return resp.json() as Promise<T>;
 }
 
 /** Generic PUT+JSON helper — throws on non-2xx responses. */
 async function put<T>(url: string, body: unknown): Promise<T> {
-  const resp = await fetch(withToken(url), {
+  const resp = await request(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -63,7 +96,7 @@ async function put<T>(url: string, body: unknown): Promise<T> {
 
 /** Generic POST+JSON helper — throws on non-2xx responses. */
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const resp = await fetch(withToken(url), {
+  const resp = await request(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -84,6 +117,14 @@ export function syncTasks(): Promise<TaskSyncResult> {
 
 export function fetchControlPlane(): Promise<ControlPlaneOverview> {
   return get<ControlPlaneOverview>("/api/control-plane");
+}
+
+export function startCoach(): Promise<{
+  started: boolean;
+  status: string;
+  url: string;
+}> {
+  return post("/api/coach/start");
 }
 
 export function fetchMemoryOverview(): Promise<MemoryOverview> {

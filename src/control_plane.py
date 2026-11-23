@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
 from http.client import HTTPException
 from pathlib import Path
 from typing import Any
@@ -11,6 +17,12 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
 from .constants import DEFAULT_PORT
+
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+class CoachStartError(RuntimeError):
+    """Configured AI Coach runtime could not be started safely."""
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -65,10 +77,134 @@ def _configured_path(value: Any) -> Path | None:
     return Path(value.strip()).expanduser()
 
 
+def _memory_runtime_status(
+    memory_root: Path,
+    copilot_home: Path,
+) -> tuple[str, str]:
+    entrypoint = memory_root / "bin" / "personal-memory-mcp.js"
+    dependencies = memory_root / "node_modules" / "tsx"
+    if not entrypoint.is_file():
+        return ("not_configured", "Memory runtime entrypoint is not configured")
+    if not dependencies.is_dir():
+        return ("needs_dependencies", "Runtime present; Node dependencies are missing")
+
+    config_path = copilot_home / ".copilot" / "mcp-config.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        servers = config.get("mcpServers") if isinstance(config, dict) else None
+        server = servers.get("personal-agent-memory") if isinstance(servers, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return ("installed", "Runtime present; MCP host registration could not be verified")
+    if not isinstance(server, dict) or server.get("type") != "local":
+        return ("installed", "Runtime present; MCP host registration is missing")
+
+    command_value = server.get("command")
+    command = (
+        Path(str(command_value)).expanduser()
+        if isinstance(command_value, str) and command_value
+        else None
+    )
+    if command is not None and not command.is_absolute():
+        resolved_command = shutil.which(str(command))
+        command = Path(resolved_command) if resolved_command else None
+    args = server.get("args")
+    registered_scripts = []
+    for value in args or []:
+        if not isinstance(value, str) or not value.endswith("personal-memory-mcp.js"):
+            continue
+        script = Path(value).expanduser()
+        if not script.is_absolute():
+            script = copilot_home / script
+        registered_scripts.append(script.resolve())
+    env = server.get("env")
+    repository_value = env.get("MEMORY_REPOSITORY_DIR") if isinstance(env, dict) else None
+    repository = Path(str(repository_value)).expanduser() if repository_value else None
+    registration_complete = (
+        command is not None
+        and command.is_file()
+        and os.access(command, os.X_OK)
+        and entrypoint.resolve() in registered_scripts
+        and any(script.is_file() for script in registered_scripts)
+        and repository is not None
+        and repository.is_dir()
+        and isinstance(env, dict)
+        and bool(env.get("MEMORY_ACCOUNT_ID"))
+        and bool(env.get("MEMORY_DEVICE"))
+    )
+    if registration_complete:
+        return ("healthy", "Runtime, dependencies, and MCP registration verified")
+    return ("installed", "Runtime present; MCP host registration needs attention")
+
+
+_coach_start_lock = threading.Lock()
+
+
+def start_coach(config: dict[str, Any]) -> dict[str, Any]:
+    """Start the configured loopback Coach server and wait until it is ready."""
+    stack = config.get("stack", {})
+    if not isinstance(stack, dict):
+        raise CoachStartError("Coach runtime is not configured")
+    coach_root = _configured_path(stack.get("coach_root"))
+    coach_url = _safe_dashboard_url(stack.get("coach_url"))
+    if coach_root is None or coach_url is None:
+        raise CoachStartError("Coach runtime or loopback URL is not configured")
+
+    script = coach_root / "scripts" / "dashboard_server.py"
+    if not script.is_file():
+        raise CoachStartError("Configured Coach runtime is missing dashboard_server.py")
+
+    parsed = urlsplit(coach_url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.port is None
+        or parsed.path not in {"", "/"}
+    ):
+        raise CoachStartError("Coach startup requires an explicit loopback HTTP port and root path")
+
+    with _coach_start_lock:
+        if _probe_coach(coach_url):
+            return {"started": False, "status": "reachable", "url": coach_url}
+
+        kwargs: dict[str, Any] = {
+            "cwd": coach_root,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = CREATE_NO_WINDOW
+        else:
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                "--host",
+                parsed.hostname,
+                "--port",
+                str(parsed.port),
+            ],
+            **kwargs,
+        )
+
+        for _ in range(40):
+            if _probe_coach(coach_url):
+                return {"started": True, "status": "reachable", "url": coach_url}
+            if process.poll() is not None:
+                raise CoachStartError("Coach process exited before becoming ready")
+            time.sleep(0.25)
+
+        process.terminate()
+        raise CoachStartError("Coach process did not become ready within 10 seconds")
+
+
 def inspect_control_plane(
     config: dict[str, Any],
     *,
     agenteye_version: str,
+    personal_version: str | None = None,
+    copilot_home: Path | str | None = None,
     active_agenteye_url: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Return safe status cards without exposing private local paths."""
@@ -92,22 +228,17 @@ def inspect_control_plane(
         _runtime(
             "Agent Eye",
             "reachable",
-            f"Current dashboard · v{agenteye_version}",
+            f"Current dashboard · v{personal_version or agenteye_version}",
             agenteye_url,
         )
     ]
 
-    if memory_root is not None and (memory_root / "bin" / "personal-memory-mcp.js").is_file():
-        dependencies = (memory_root / "node_modules" / "tsx").is_dir()
-        runtimes.append(
-            _runtime(
-                "Personal Memory",
-                "installed" if dependencies else "needs_dependencies",
-                "Runtime present; MCP host registration is configured separately"
-                if dependencies
-                else "Runtime present; Node dependencies are missing",
-            )
+    if memory_root is not None:
+        memory_status, memory_detail = _memory_runtime_status(
+            memory_root,
+            Path(copilot_home).expanduser() if copilot_home is not None else Path.home(),
         )
+        runtimes.append(_runtime("Personal Memory", memory_status, memory_detail))
     else:
         runtimes.append(
             _runtime("Personal Memory", "not_configured", "Memory runtime path is not configured")
@@ -154,8 +285,37 @@ def inspect_control_plane(
             if not isinstance(runtimes_config, dict):
                 raise ValueError("invalid runtimes lock")
             runtime_count = len(runtimes_config)
-            control_status = "configured"
-            control_detail = f"Personal Agent control plane · {runtime_count} pinned runtimes"
+            healthy_statuses = {"reachable", "healthy", "connected"}
+            component_checks = runtimes
+            healthy_count = sum(
+                1 for runtime in component_checks if runtime["status"] in healthy_statuses
+            )
+            hard_failures = {
+                "connection_failed",
+                "needs_dependencies",
+                "invalid",
+                "invalid_configuration",
+                "needs_setup",
+            }
+            if any(runtime["status"] in hard_failures for runtime in component_checks):
+                control_status = "unhealthy"
+                control_detail = (
+                    "Personal Agent control plane · hard runtime failure detected · "
+                    f"{healthy_count + 1}/{len(component_checks) + 1} checks verified"
+                )
+            elif healthy_count == len(component_checks):
+                control_status = "healthy"
+                control_detail = (
+                    f"Personal Agent control plane · "
+                    f"{healthy_count + 1}/{len(component_checks) + 1} checks verified"
+                )
+            else:
+                control_status = "degraded"
+                control_detail = (
+                    f"Personal Agent control plane · "
+                    f"{healthy_count + 1}/{len(component_checks) + 1} checks verified · "
+                    f"{runtime_count} pinned runtimes"
+                )
         except (OSError, json.JSONDecodeError, ValueError):
             control_status = "invalid"
             control_detail = "Control-plane runtime lock could not be read"

@@ -347,6 +347,19 @@ def test_control_plane_endpoint_returns_runtime_overview(client, tmp_path):
     assert response.json()["runtimes"][0]["name"] == "Agent Eye"
 
 
+def test_start_coach_endpoint_uses_configured_runtime(client):
+    expected = {
+        "started": True,
+        "status": "reachable",
+        "url": "http://127.0.0.1:8765/",
+    }
+    with patch("src.dashboard_api.start_coach", return_value=expected):
+        response = client.post("/api/coach/start")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_completed_candidate_is_queued_for_intake_automatically(client, tmp_path):
     task_db = tmp_path / "tasks.db"
     outbox = tmp_path / "intake.jsonl"

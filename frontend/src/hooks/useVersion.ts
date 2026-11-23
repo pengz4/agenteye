@@ -19,6 +19,7 @@ export function useVersion(initialVersion: string) {
 
   const [versionInfo, setVersionInfo] = useState<VersionInfo>({
     current: initialVersion,
+    personal: null,
     latest: null,
     update_available: false,
   });

@@ -11,6 +11,16 @@ import { PALETTE_OPTIONS } from "../constants";
 import HamburgerMenu from "./HamburgerMenu";
 import ConfirmModal from "./ConfirmModal";
 
+const BREADCRUMB_LABELS = {
+  active: "Active sessions",
+  previous: "Previous sessions",
+  tasks: "Task Review",
+  memory: "Memory",
+  obsidian: "Obsidian",
+  timeline: "Timeline",
+  files: "Files",
+} as const;
+
 interface HeaderProps {
   /** Version string from the Python package, e.g. "1.2.3". */
   initialVersion: string;
@@ -27,7 +37,7 @@ export default function Header({
 }: HeaderProps) {
   const { theme, toggleMode, setPalette } = useTheme();
   const { versionInfo, updating, doUpdate } = useVersion(initialVersion);
-  const { serverPid, widgetsCollapsed } = useAppState();
+  const { serverPid, widgetsCollapsed, currentTab } = useAppState();
   const dispatch = useAppDispatch();
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -35,69 +45,50 @@ export default function Header({
 
   return (
     <div className="header">
-      <img
-        src="/static/logo.png"
-        style={{
-          height: 60,
-          width: "auto",
-          marginRight: -6,
-          verticalAlign: "middle",
-        }}
-        alt="Agent Eye"
-      />
-      <div className="brand">
-        <h1>Agent Eye</h1>
-
-        {/* Waiting badge — only shown when sessions are waiting for input */}
+      <div className="header-context">
+        <div className="header-breadcrumb">
+          <span>Personal Agent</span>
+          <span>/</span>
+          <strong>{BREADCRUMB_LABELS[currentTab]}</strong>
+        </div>
+        <div className="header-credits">
+          AgentEye
+          <span
+            id="version-display"
+            data-tip={
+              showUpdateModal
+                ? `v${versionInfo.latest} available — click to update`
+                : "Up to date"
+            }
+            className={showUpdateModal ? "version-update-available" : ""}
+            onClick={showUpdateModal ? () => setShowConfirm(true) : undefined}
+            style={showUpdateModal ? { cursor: "pointer" } : undefined}
+          >
+            {versionInfo.personal
+              ? ` v${versionInfo.personal}`
+              : ` v${versionInfo.current}`}
+            {updating && " ⏳ Updating…"}
+            {showUpdateModal && " ⬆"}
+          </span>
+        </div>
         {waitingCount > 0 && (
           <span id="waiting-badge" data-tip="Sessions waiting for input">
             ⏳ {waitingCount} waiting
           </span>
         )}
-
-        <div className="header-credits">
-        Created by{" "}
-        <strong>
-          <a
-            href="https://github.com/JeffSteinbok"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Jeff Steinbok
-          </a>
-        </strong>
-        &nbsp;&bull;&nbsp;
-        <span
-          id="version-display"
-          data-tip={
-            showUpdateModal
-              ? `v${versionInfo.latest} available — click to update`
-              : "Up to date"
-          }
-          className={showUpdateModal ? "version-update-available" : ""}
-          onClick={
-            showUpdateModal
-              ? () => setShowConfirm(true)
-              : undefined
-          }
-          style={showUpdateModal ? { cursor: "pointer" } : undefined}
-        >
-          v{versionInfo.current}
-          {updating && " ⏳ Updating…"}
-          {showUpdateModal && " ⬆"}
-        </span>
-      </div>
       </div>
 
       <div className="header-right">
         <div className="theme-controls">
-          <button
-            className="theme-btn"
-            onClick={() => dispatch({ type: "TOGGLE_WIDGETS_COLLAPSED" })}
-            data-tip={widgetsCollapsed ? "Show stats widgets" : "Hide stats widgets"}
-          >
-            {widgetsCollapsed ? "📊 Show Stats" : "📊 Hide Stats"}
-          </button>
+          {currentTab === "active" && (
+            <button
+              className="theme-btn"
+              onClick={() => dispatch({ type: "TOGGLE_WIDGETS_COLLAPSED" })}
+              data-tip={widgetsCollapsed ? "Show stats widgets" : "Hide stats widgets"}
+            >
+              {widgetsCollapsed ? "📊 Show Stats" : "📊 Hide Stats"}
+            </button>
+          )}
           <button
             className="theme-btn"
             onClick={toggleMode}

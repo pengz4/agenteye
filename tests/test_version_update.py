@@ -52,6 +52,7 @@ class TestApiVersion:
         assert resp.status_code == 200
         data = resp.json()
         assert data["current"] == dashboard_api.__version__
+        assert data["personal"] == "1.3.0-personal.8"
         assert data["latest"] == "99.0.0"
         assert data["update_available"] is True
 
