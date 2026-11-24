@@ -69,7 +69,12 @@ function Dashboard() {
   const { sessions, remoteSessions, processes, currentTab, currentView, searchFilter, widgetsCollapsed } = state;
 
   // Start polling
-  useSessions();
+  useSessions({
+    fullSessionPolling: currentTab === "active" ||
+      currentTab === "previous" ||
+      currentTab === "timeline" ||
+      currentTab === "files",
+  });
   const taskState = useTasks();
 
   // Fetch server PID on mount
@@ -79,30 +84,13 @@ function Dashboard() {
       .catch(() => {});
   }, [dispatch]);
 
-  // Handle URL hash on mount (e.g. #timeline)
-  useEffect(() => {
-    const validTabs: Tab[] = [
-      "active",
-      "previous",
-      "tasks",
-      "memory",
-      "obsidian",
-      "timeline",
-      "files",
-    ];
-    const hashTab = location.hash.replace("#", "") as Tab;
-    if (validTabs.includes(hashTab)) {
-      dispatch({ type: "SET_TAB", tab: hashTab });
-    }
-  }, [dispatch]);
-
   // Derived data: filter → split active/previous
   const filtered = filterSessions(sessions, searchFilter);
   const { active, previous } = splitActivePrevious(filtered, processes);
 
   // Waiting count for header badge
-  const waitingCount = sessions.filter(
-    (s) => processes[s.id]?.state === "waiting",
+  const waitingCount = Object.values(processes).filter(
+    (process) => process.state === "waiting",
   ).length;
 
   // Last updated — based on actual fetch timestamp
@@ -132,6 +120,12 @@ function Dashboard() {
         activeCount={active.length}
         previousCount={previous.length}
         taskCount={taskState.reviewCount}
+        showSessionCounts={
+          currentTab === "active" ||
+          currentTab === "previous" ||
+          currentTab === "timeline" ||
+          currentTab === "files"
+        }
       />
 
       <div className="workspace-main">

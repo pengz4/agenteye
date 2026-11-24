@@ -40,19 +40,28 @@ describe("useTheme", () => {
   });
 
   describe("useTasks", () => {
+    it("reads task state without triggering a full session reconciliation", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve([]),
+      });
+
+      const { result } = renderHook(() => useTasks());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0][0])).toContain("/api/tasks?");
+      expect(String(mockFetch.mock.calls[0][0])).not.toContain("/api/tasks/sync");
+    });
+
     it("locks one task against repeated actions until completion", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
         statusText: "OK",
-        json: () => Promise.resolve({
-          tasks: [],
-          reconciled: 0,
-          obsidian_synced: 0,
-          obsidian_status: "connected",
-          achievement_linked: 0,
-          coach_staged: 0,
-        }),
+        json: () => Promise.resolve([]),
       });
       const { result } = renderHook(() => useTasks());
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -66,14 +75,7 @@ describe("useTheme", () => {
           ok: true,
           status: 200,
           statusText: "OK",
-          json: () => Promise.resolve({
-            tasks: [],
-            reconciled: 0,
-            obsidian_synced: 0,
-            obsidian_status: "connected",
-            achievement_linked: 0,
-            coach_staged: 0,
-          }),
+          json: () => Promise.resolve([]),
         });
 
       let first: Promise<void>;
@@ -104,14 +106,7 @@ describe("useTheme", () => {
         ok: true,
         status: 200,
         statusText: "OK",
-        json: () => Promise.resolve({
-          tasks: [],
-          reconciled: 0,
-          obsidian_synced: 0,
-          obsidian_status: "connected",
-          achievement_linked: 0,
-          coach_staged: 0,
-        }),
+        json: () => Promise.resolve([]),
       });
       const { result } = renderHook(() => useTasks());
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -140,14 +135,7 @@ describe("useTheme", () => {
         ok: true,
         status: 200,
         statusText: "OK",
-        json: () => Promise.resolve({
-          tasks: [],
-          reconciled: 0,
-          obsidian_synced: 0,
-          obsidian_status: "connected",
-          achievement_linked: 0,
-          coach_staged: 0,
-        }),
+        json: () => Promise.resolve([]),
       });
       const { result } = renderHook(() => useTasks());
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -184,14 +172,7 @@ describe("useTheme", () => {
           ok: true,
           status: 200,
           statusText: "OK",
-          json: () => Promise.resolve({
-            tasks: [],
-            reconciled: 0,
-            obsidian_synced: 0,
-            obsidian_status: "connected",
-            achievement_linked: 0,
-            coach_staged: 0,
-          }),
+          json: () => Promise.resolve([]),
         });
         await merge!;
       });
@@ -504,6 +485,23 @@ describe("useSessions", () => {
 
     expect(mockFetch).toHaveBeenCalledWith("/api/sessions?token=test-token");
     expect(mockFetch).toHaveBeenCalledWith("/api/processes?token=test-token");
+  });
+
+  it("keeps full session scans paused on non-session workspaces", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    renderHook(() => useSessions({ fullSessionPolling: false }), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/processes?token=test-token");
+    expect(
+      mockFetch.mock.calls.some(([url]) => String(url).includes("/api/sessions")),
+    ).toBe(false);
   });
 
   it("handles fetch failure gracefully", async () => {

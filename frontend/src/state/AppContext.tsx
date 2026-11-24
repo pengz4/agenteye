@@ -47,6 +47,15 @@ export type SortMode = "default" | "status_changed";
 const VALID_VIEWS: View[] = ["tile", "list"];
 const VALID_GROUP_BY: GroupBy[] = ["none", "project", "machine"];
 const VALID_SORTS: SortMode[] = ["default", "status_changed"];
+const VALID_TABS: Tab[] = [
+  "active",
+  "previous",
+  "tasks",
+  "memory",
+  "obsidian",
+  "timeline",
+  "files",
+];
 
 function safeParseStarred(): Set<string> {
   try {
@@ -107,6 +116,8 @@ export interface AppState {
 }
 
 export function initialState(): AppState {
+  const hashTab = location.hash.replace("#", "") as Tab;
+  const currentTab = VALID_TABS.includes(hashTab) ? hashTab : "active";
   const rawView = localStorage.getItem(STORAGE_KEY_VIEW) as View | null;
   const currentView: View = rawView && VALID_VIEWS.includes(rawView) ? rawView : "tile";
   const rawGroupBy = localStorage.getItem(STORAGE_KEY_GROUP_BY) as GroupBy | null;
@@ -117,7 +128,7 @@ export function initialState(): AppState {
     sessions: [],
     remoteSessions: [],
     processes: {},
-    currentTab: "active",
+    currentTab,
     currentView,
     groupBy,
     sortMode,

@@ -28,15 +28,8 @@ describe("App", () => {
         payload = [];
       } else if (String(url).includes("/api/processes")) {
         payload = {};
-      } else if (String(url).includes("/api/tasks/sync")) {
-        payload = {
-          tasks: [],
-          reconciled: 0,
-          obsidian_synced: 0,
-          obsidian_status: "connected",
-          achievement_linked: 0,
-          coach_staged: 0,
-        };
+      } else if (String(url).includes("/api/tasks")) {
+        payload = [];
       } else if (String(url).includes("/api/server-info")) {
         payload = { pid: 1, port: "5112", sync_folder: null, log_file: "", log_level: "INFO" };
       } else if (String(url).includes("/api/settings")) {
@@ -87,6 +80,11 @@ describe("App", () => {
         .querySelector('[data-tab="tasks"]') as HTMLElement,
     );
     expect(screen.getByRole("heading", { name: "Task Review" })).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Workspace navigation" }),
+      ).getByRole("button", { name: "Active" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Notifications/ }),
     ).toBeInTheDocument();

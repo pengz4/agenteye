@@ -402,6 +402,97 @@ class TestApiSessionTurns:
         assert [turn["turn_index"] for turn in earlier.json()["turns"]] == [0]
         assert earlier.json()["has_earlier"] is False
 
+    def test_recovers_missing_assistant_responses_from_events(
+        self, client, populated_db, tmp_path
+    ):
+        conn, db_path = populated_db
+        conn.execute(
+            "UPDATE turns SET assistant_response = NULL "
+            "WHERE session_id = ? AND turn_index = 0",
+            ("sess-1",),
+        )
+        conn.commit()
+        session_dir = tmp_path / "session-state" / "sess-1"
+        session_dir.mkdir(parents=True)
+        events = [
+            {
+                "type": "user.message",
+                "data": {"messageId": "user-1", "content": "Hello world"},
+            },
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "assistant-1",
+                    "originatingMessageId": "user-1",
+                    "content": "Recovered assistant answer",
+                },
+            },
+        ]
+        (session_dir / "events.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("src.dashboard_api.DB_PATH", db_path),
+            patch("src.dashboard_api.SESSION_STATE_DIR", str(tmp_path / "session-state")),
+        ):
+            response = client.get("/api/session/sess-1/turns?limit=1")
+
+        assert response.status_code == 200
+        assert response.json()["turns"][0]["assistant_response"] == (
+            "Recovered assistant answer"
+        )
+
+    def test_does_not_guess_when_user_content_is_ambiguous(
+        self, client, populated_db, tmp_path
+    ):
+        conn, db_path = populated_db
+        conn.execute(
+            "UPDATE turns SET assistant_response = NULL "
+            "WHERE session_id = ? AND turn_index = 0",
+            ("sess-1",),
+        )
+        conn.commit()
+        session_dir = tmp_path / "session-state" / "sess-1"
+        session_dir.mkdir(parents=True)
+        events = [
+            {
+                "type": "user.message",
+                "data": {"messageId": "user-other", "content": "Hello world"},
+            },
+            {
+                "type": "assistant.message",
+                "data": {
+                    "originatingMessageId": "user-other",
+                    "content": "Different answer",
+                },
+            },
+            {
+                "type": "user.message",
+                "data": {"messageId": "user-1", "content": "Hello world"},
+            },
+            {
+                "type": "assistant.message",
+                "data": {
+                    "originatingMessageId": "user-1",
+                    "content": "Recovered assistant answer",
+                },
+            },
+        ]
+        (session_dir / "events.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("src.dashboard_api.DB_PATH", db_path),
+            patch("src.dashboard_api.SESSION_STATE_DIR", str(tmp_path / "session-state")),
+        ):
+            response = client.get("/api/session/sess-1/turns?limit=1")
+
+        assert response.json()["turns"][0]["assistant_response"] is None
+
 
 class TestApiFiles:
     def test_returns_file_list(self, client, populated_db):

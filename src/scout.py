@@ -641,6 +641,33 @@ def get_scout_session_detail(session_id: str) -> dict:
     }
 
 
+def get_scout_session_identities(session_ids: set[str]) -> list[dict]:
+    """Read metadata for only the Scout sessions referenced by tasks."""
+    if not session_ids:
+        return []
+    raw_ids = [session_id.removeprefix(SESSION_ID_PREFIX) for session_id in session_ids]
+    try:
+        db = _get_db()
+    except FileNotFoundError:
+        return []
+    placeholders = ",".join("?" for _ in raw_ids)
+    try:
+        rows = db.execute(
+            f"SELECT id, repository, branch FROM sessions WHERE id IN ({placeholders})",
+            raw_ids,
+        ).fetchall()
+    finally:
+        db.close()
+    return [
+        {
+            "id": SESSION_ID_PREFIX + str(row["id"]),
+            "repository": row["repository"],
+            "branch": row["branch"],
+        }
+        for row in rows
+    ]
+
+
 def get_scout_session_turns(session_id: str, *, before: int | None, limit: int) -> dict:
     """Return one bounded page of Scout conversation turns."""
     raw_id = _raw_session_id(session_id)

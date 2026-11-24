@@ -472,6 +472,41 @@ def get_claude_session_cwd(session_id: str) -> str | None:
     )
 
 
+def get_claude_session_identities(session_ids: set[str]) -> list[dict]:
+    """Read metadata for only the Claude sessions referenced by tasks."""
+    identities: list[dict] = []
+    for prefixed_id in sorted(session_ids):
+        raw_id = prefixed_id.removeprefix(SESSION_ID_PREFIX)
+        transcript = _find_transcript(raw_id)
+        if not transcript:
+            continue
+        project_path = os.path.dirname(transcript)
+        cwd = _cwd_from_transcript(transcript) or _decode_project_dir(
+            os.path.basename(project_path)
+        )
+        branch = ""
+        index_file = os.path.join(project_path, "sessions-index.json")
+        try:
+            with open(index_file, encoding="utf-8") as f:
+                entries = json.load(f).get("entries", [])
+        except (OSError, ValueError, TypeError):
+            entries = []
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("sessionId") != raw_id:
+                continue
+            cwd = entry.get("projectPath") or cwd
+            branch = entry.get("gitBranch") or ""
+            break
+        identities.append(
+            {
+                "id": prefixed_id,
+                "repository": _derive_repository(cwd),
+                "branch": branch,
+            }
+        )
+    return identities
+
+
 def _extract_text_from_content(content) -> str:
     """Extract plain text from message content (string or content blocks)."""
     if isinstance(content, str):

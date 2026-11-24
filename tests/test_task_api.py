@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+from src.task_store import TaskStore
+
 
 ACTIVE_SESSION = {
     "id": "session-1",
@@ -83,6 +85,55 @@ def test_idle_task_is_listed_as_awaiting_confirmation(client, tmp_path):
 
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_task_list_does_not_rebuild_all_sessions(client, tmp_path):
+    with (
+        patch("src.dashboard_api.TASK_STORE_DB", str(tmp_path / "tasks.db")),
+        patch(
+            "src.dashboard_api._build_session_list",
+            side_effect=AssertionError("task list must stay read-only and cheap"),
+        ),
+    ):
+        response = client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_task_list_preserves_claude_identity_without_full_rebuild(client, tmp_path):
+    tasks_path = tmp_path / "tasks.db"
+    store = TaskStore(tasks_path)
+    store.reconcile_session(
+        session_id="cc:claude-1",
+        source="claude",
+        title="Claude review",
+        turn_index=1,
+        cwd="/work/my-project",
+        is_running=True,
+        session_state="idle",
+    )
+    claude_session = {
+        "id": "cc:claude-1",
+        "repository": "owner/my-project",
+        "branch": "feature/task-context",
+    }
+    with (
+        patch("src.dashboard_api.TASK_STORE_DB", str(tasks_path)),
+        patch(
+            "src.dashboard_api.get_claude_session_identities",
+            return_value=[claude_session],
+        ),
+        patch(
+            "src.dashboard_api._build_session_list",
+            side_effect=AssertionError("task list must not scan every session"),
+        ),
+    ):
+        response = client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert response.json()[0]["repository"] == "owner/my-project"
+    assert response.json()[0]["branch"] == "feature/task-context"
 
 
 def test_confirm_reopen_split_and_merge_task_actions(client, tmp_path):

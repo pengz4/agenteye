@@ -200,8 +200,8 @@ SYNC_FOLDER_NAME = "AgentEye"
 SYNC_EXPORT_INTERVAL = 30
 """How often to export local sessions to the sync folder (seconds)."""
 
-TASK_SYNC_INTERVAL = 5
-"""How often to reconcile CLI tasks and publish state transitions (seconds)."""
+TASK_SYNC_INTERVAL = 60
+"""How often the expensive full task reconciliation runs in the background."""
 
 SYNC_STALE_THRESHOLD = 14400
 """Ignore remote machine data older than this (seconds). 4 hours."""

@@ -686,6 +686,7 @@ a:hover { text-decoration: underline; }
 }
 .session-conversation-message.user { border-left-color: var(--accent); }
 .session-conversation-message.assistant { border-left-color: var(--green); }
+.session-conversation-message.assistant.is-missing p { color: var(--muted); }
 .session-conversation-message > span {
   display: block;
   margin-bottom: 4px;

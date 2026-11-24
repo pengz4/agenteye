@@ -18,7 +18,9 @@ import type { ProcessMap } from "../types";
  *     enabled, so state-transition alerts still fire while backgrounded.
  *     With notifications off, polling stops entirely.
  */
-export function useSessions() {
+export function useSessions(
+  { fullSessionPolling = true }: { fullSessionPolling?: boolean } = {},
+) {
   const dispatch = useAppDispatch();
   const { notificationsEnabled, sessions, processes, statusChangedAt } = useAppState();
   const prevProcesses = useRef<ProcessMap>({});
@@ -138,7 +140,9 @@ export function useSessions() {
       stop(bgTimer);
       bgTimer = null;
       if (fastTimer === null) fastTimer = setInterval(fetchProcs, PROCESS_POLL_MS);
-      if (fullTimer === null) fullTimer = setInterval(fetchAll, SESSION_POLL_MS);
+      if (fullSessionPolling && fullTimer === null) {
+        fullTimer = setInterval(fetchAll, SESSION_POLL_MS);
+      }
     };
 
     // Hidden: pause heavy polling; keep a slow poll only to drive desktop
@@ -158,7 +162,8 @@ export function useSessions() {
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
-        fetchAll(); // instant catch-up on focus
+        if (fullSessionPolling) fetchAll(); // instant catch-up on focus
+        else fetchProcs();
         startForeground();
       } else {
         startBackground();
@@ -175,7 +180,7 @@ export function useSessions() {
       stop(bgTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fullSessionPolling]);
 
   return { processes, sessions };
 }

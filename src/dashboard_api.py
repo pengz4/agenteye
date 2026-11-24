@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 import urllib.request
-from collections import Counter
+from collections import Counter, OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -41,6 +41,7 @@ from .claude_code import (
 from .claude_code import (
     get_claude_session_cwd,
     get_claude_session_detail,
+    get_claude_session_identities,
     get_claude_session_turns,
     get_claude_sessions,
     get_running_claude_sessions,
@@ -72,6 +73,7 @@ from .obsidian_sync import ObsidianSync, ObsidianSyncConfig, discover_obsidian_v
 from .obsidian_workbench import get_obsidian_overview
 from .process_tracker import (
     focus_session_window,
+    get_cached_running_sessions,
     get_recent_output,
     get_running_sessions,
     get_session_event_data,
@@ -102,6 +104,7 @@ from .scout import (
     get_running_scout_sessions,
     get_scout_session_cwd,
     get_scout_session_detail,
+    get_scout_session_identities,
     get_scout_session_turns,
     get_scout_sessions,
 )
@@ -112,6 +115,8 @@ logger = logging.getLogger(__name__)
 
 # Strict pattern for session IDs — UUID-like strings, optionally prefixed for non-Copilot sources
 _SESSION_ID_RE = re.compile(r"^(cc:|scout:)?[a-zA-Z0-9_-]+$")
+_MAX_ASSISTANT_EVENT_CACHE = 24
+_assistant_event_cache: OrderedDict[str, tuple[int, int, list[tuple[str, str]]]] = OrderedDict()
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
@@ -193,6 +198,14 @@ def _sync_loop() -> None:
 
 def _task_sync_loop() -> None:
     """Reconcile active CLI tasks and synchronize Obsidian in the background."""
+    if not _get_task_store().list():
+        try:
+            with _task_sync_lock:
+                _reconcile_tasks()
+                _sync_tasks_to_obsidian()
+                _reconcile_achievement_handoff()
+        except Exception:
+            logger.exception("Initial background task synchronization failed")
     while not _task_sync_stop.wait(timeout=TASK_SYNC_INTERVAL):
         try:
             with _task_sync_lock:
@@ -899,8 +912,7 @@ def api_tasks(status: str | None = None):
     allowed = {"active", "awaiting_confirmation", "completed", "blocked"}
     if status is not None and status not in allowed:
         return JSONResponse({"error": "Invalid task status"}, status_code=400)
-    sessions = _build_session_list()
-    return _enrich_tasks_with_sessions(_get_task_store().list(status), sessions)
+    return _enrich_tasks_from_session_store(_get_task_store().list(status))
 
 
 @app.get("/api/control-plane")
@@ -966,6 +978,47 @@ def api_tasks_sync():
         "achievement_linked": achievement_linked,
         "coach_staged": coach_staged,
     }
+
+
+def _enrich_tasks_from_session_store(tasks: list[dict]) -> list[dict]:
+    """Read task identity from indexed session metadata without scanning sessions."""
+    sessions: list[dict] = []
+    copilot_ids = [str(task["session_id"]) for task in tasks if task.get("source") == "copilot"]
+    if copilot_ids:
+        try:
+            db = get_db()
+        except FileNotFoundError:
+            db = None
+        if db is not None:
+            placeholders = ",".join("?" for _ in copilot_ids)
+            try:
+                rows = db.execute(
+                    f"SELECT id, repository, branch FROM sessions WHERE id IN ({placeholders})",
+                    copilot_ids,
+                ).fetchall()
+                sessions.extend(dict(row) for row in rows)
+            finally:
+                db.close()
+
+    claude_ids = {str(task["session_id"]) for task in tasks if task.get("source") == "claude"}
+    scout_ids = {str(task["session_id"]) for task in tasks if task.get("source") == "scout"}
+    if claude_ids:
+        sessions.extend(get_claude_session_identities(claude_ids))
+    if scout_ids:
+        sessions.extend(get_scout_session_identities(scout_ids))
+
+    running = get_cached_running_sessions()
+    sessions_by_id = {str(session["id"]): session for session in sessions}
+    for session_id in copilot_ids:
+        if session_id not in running:
+            continue
+        session = sessions_by_id.setdefault(session_id, {"id": session_id})
+        event = get_session_event_data(session_id, is_running=True)
+        if event.branch:
+            session["branch"] = event.branch
+        if event.repository:
+            session["repository"] = event.repository
+    return _enrich_tasks_with_sessions(tasks, sessions)
 
 
 def _enrich_tasks_with_sessions(tasks: list[dict], sessions: list[dict]) -> list[dict]:
@@ -1150,10 +1203,89 @@ def _copilot_session_turns(session_id: str, *, before: int | None, limit: int) -
     has_earlier = len(page) > limit
     if has_earlier:
         page = page[:limit]
+    turns = [dict(row) for row in reversed(page)]
+    if any(not turn.get("assistant_response") for turn in turns):
+        recovered = _copilot_assistant_responses_from_events(session_id)
+        for turn in turns:
+            if turn.get("assistant_response") or not turn.get("user_message"):
+                continue
+            matches = [
+                response
+                for user_message, response in recovered
+                if user_message == turn["user_message"]
+            ]
+            if len(matches) == 1:
+                turn["assistant_response"] = matches[0] or None
     return {
-        "turns": [dict(row) for row in reversed(page)],
+        "turns": turns,
         "has_earlier": has_earlier,
     }
+
+
+def _copilot_assistant_responses_from_events(session_id: str) -> list[tuple[str, str]]:
+    """Recover visible assistant replies missing from the session-store turns."""
+    events_file = os.path.join(SESSION_STATE_DIR, session_id, "events.jsonl")
+    try:
+        stat = os.stat(events_file)
+    except OSError:
+        _assistant_event_cache.pop(events_file, None)
+        return []
+    cached = _assistant_event_cache.get(events_file)
+    if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+        _assistant_event_cache.move_to_end(events_file)
+        return cached[2]
+
+    user_order: list[str] = []
+    user_content: dict[str, str] = {}
+    replies: dict[str, list[str]] = {}
+    try:
+        with open(events_file, encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if '"user.message"' not in line and '"assistant.message"' not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                data = event.get("data", {})
+                if event.get("type") == "user.message":
+                    message_id = data.get("messageId")
+                    if isinstance(message_id, str):
+                        user_order.append(message_id)
+                        content = data.get("content")
+                        if isinstance(content, str):
+                            user_content[message_id] = content
+                    continue
+                if event.get("type") != "assistant.message":
+                    continue
+                originating_id = data.get("originatingMessageId")
+                content = data.get("content")
+                if not isinstance(originating_id, str) or not isinstance(content, str):
+                    continue
+                content = content.strip()
+                if not content:
+                    continue
+                current = replies.setdefault(originating_id, [])
+                if content not in current:
+                    current.append(content)
+    except OSError:
+        return []
+
+    responses = [
+        (
+            user_content.get(message_id, ""),
+            "\n\n".join(replies.get(message_id, [])),
+        )
+        for message_id in user_order
+    ]
+    _assistant_event_cache[events_file] = (
+        stat.st_mtime_ns,
+        stat.st_size,
+        responses,
+    )
+    while len(_assistant_event_cache) > _MAX_ASSISTANT_EVENT_CACHE:
+        _assistant_event_cache.popitem(last=False)
+    return responses
 
 
 @app.get(

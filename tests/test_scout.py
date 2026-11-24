@@ -12,6 +12,7 @@ from src.scout import (
     get_running_scout_sessions,
     get_scout_session_cwd,
     get_scout_session_detail,
+    get_scout_session_identities,
     get_scout_session_turns,
     get_scout_sessions,
 )
@@ -202,3 +203,19 @@ def test_scout_turns_are_bounded_and_ordered(monkeypatch, tmp_path):
     assert latest["has_earlier"] is True
     assert [turn["turn_index"] for turn in earlier["turns"]] == [0]
     assert earlier["has_earlier"] is False
+
+
+def test_scout_identity_query_is_bounded_to_requested_ids(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "session-store.db")
+    _create_scout_db(db_path)
+    monkeypatch.setattr("src.scout.SCOUT_SESSION_STORE_DB", db_path)
+
+    identities = get_scout_session_identities(
+        {f"{SESSION_ID_PREFIX}scout-1111"},
+    )
+
+    assert identities == [{
+        "id": f"{SESSION_ID_PREFIX}scout-1111",
+        "repository": "owner/scout-repo",
+        "branch": "main",
+    }]

@@ -210,6 +210,12 @@ export default function SessionConversationOverlay({
                 <p>{turn.assistant_response}</p>
               </div>
             )}
+            {!turn.assistant_response && turn.user_message && (
+              <div className="session-conversation-message assistant is-missing">
+                <span>Assistant</span>
+                <p>Assistant response not recorded yet.</p>
+              </div>
+            )}
           </article>
         ))}
         {loading && turns.length > 0 && (

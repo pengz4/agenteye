@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   confirmTask,
+  fetchTasks,
   mergeTasks,
   requestAchievementReview,
   requestCoachPractice,
   reopenTask,
   skipAchievement,
   splitTask,
-  syncTasks,
 } from "../api";
 import type { AgentTask } from "../types";
 import { showToast } from "../components/Toast";
@@ -24,8 +24,8 @@ export function useTasks() {
 
   const refresh = useCallback(async () => {
     try {
-      const result = await syncTasks();
-      setTasks(result.tasks);
+      const nextTasks = await fetchTasks();
+      setTasks(nextTasks);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Task sync failed");

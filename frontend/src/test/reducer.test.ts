@@ -22,6 +22,7 @@ let state: AppState;
 
 beforeEach(() => {
   Object.keys(store).forEach((k) => delete store[k]);
+  window.history.replaceState(null, "", "/");
   state = initialState();
 });
 
@@ -31,6 +32,11 @@ describe("initialState()", () => {
     expect(state.currentTab).toBe("active");
     expect(state.sessions).toEqual([]);
     expect(state.consecutiveFailures).toBe(0);
+  });
+
+  it("starts on the workspace encoded in the URL hash", () => {
+    window.history.replaceState(null, "", "/#tasks");
+    expect(initialState().currentTab).toBe("tasks");
   });
 
   it("reads starred sessions from localStorage", () => {

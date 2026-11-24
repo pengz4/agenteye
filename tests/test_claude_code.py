@@ -20,6 +20,7 @@ from src.claude_code import (
     _session_from_transcript,
     get_claude_session_cwd,
     get_claude_session_detail,
+    get_claude_session_identities,
     get_claude_session_turns,
     get_claude_sessions,
 )
@@ -223,6 +224,18 @@ class TestGetClaudeSessionDetail:
 
         assert len(page["turns"]) == 1
         assert page["has_earlier"] is True
+
+    def test_reads_only_requested_session_identity(self, claude_projects):
+        with patch("src.claude_code.CLAUDE_PROJECTS_DIR", claude_projects):
+            identities = get_claude_session_identities(
+                {f"{SESSION_ID_PREFIX}aaaa-1111"},
+            )
+
+        assert identities == [{
+            "id": f"{SESSION_ID_PREFIX}aaaa-1111",
+            "repository": "",
+            "branch": "fix/login",
+        }]
 
 
 # ── _extract_text_from_content ────────────────────────────────────────────────────────────

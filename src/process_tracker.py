@@ -998,6 +998,11 @@ def get_running_sessions() -> dict[str, ProcessInfo]:
             return _running_cache.data
 
 
+def get_cached_running_sessions() -> dict[str, ProcessInfo]:
+    """Return the latest process snapshot without triggering an expensive scan."""
+    return dict(_running_cache.data)
+
+
 def _read_event_data(session_id) -> EventData:
     """
     Read mcp_servers, tool_counts, context (cwd/branch/repo), and intent
