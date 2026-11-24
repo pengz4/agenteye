@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import TaskList from "../components/TaskList";
 import type { AgentTask } from "../types";
@@ -44,6 +44,107 @@ describe("TaskList", () => {
     expect(screen.getByText("Build the dashboard")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm complete" }));
     expect(confirm).toHaveBeenCalledWith("task-1");
+  });
+
+  it("shows stable session identity and groups matching prompts", () => {
+    const duplicate = {
+      ...task({
+        id: "task-2",
+        session_id: "session-2",
+      }),
+      repository: "porsche/personal-agent-skills",
+      branch: "main",
+      session_short_id: "sessio",
+    } as AgentTask;
+    const first = {
+      ...task({
+        title: "Reply exactly READY.",
+        summary: "Reply exactly READY.",
+      }),
+      repository: "porsche/personal-agent-skills",
+      branch: "main",
+      session_short_id: "sessio",
+    } as AgentTask;
+    const second = {
+      ...duplicate,
+      title: "Reply exactly READY.",
+      summary: "Reply exactly READY.",
+    };
+
+    render(
+      <TaskList
+        tasks={[first, second]}
+        onConfirm={vi.fn()}
+        onReopen={vi.fn()}
+        onSplit={vi.fn()}
+        onMerge={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("2 matching reviews")).toBeInTheDocument();
+    expect(screen.getAllByText(/personal-agent-skills · main/)).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "View session" })).toHaveLength(2);
+  });
+
+  it("loads session conversation only after the card is expanded", async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          turns: [{
+            turn_index: 4,
+            user_message: "Fix the task review context",
+            assistant_response: "Implemented the session drawer.",
+          }],
+          has_earlier: true,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          turns: [{
+            turn_index: 3,
+            user_message: "Improve the Task Review identity",
+            assistant_response: "Added session metadata.",
+          }],
+          has_earlier: false,
+        }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(
+      <TaskList
+        tasks={[task()]}
+        onConfirm={vi.fn()}
+        onReopen={vi.fn()}
+        onSplit={vi.fn()}
+        onMerge={vi.fn()}
+      />,
+    );
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "View session" }));
+    expect(await screen.findByRole("dialog", { name: "Session conversation" }))
+      .toBeInTheDocument();
+    expect(await screen.findByText("Fix the task review context")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier" }));
+    expect(await screen.findByText("Improve the Task Review identity")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load earlier" })).not.toBeInTheDocument();
+
+    const dialog = screen.getByRole("dialog", { name: "Session conversation" });
+    const initialLeft = dialog.style.left;
+    fireEvent.pointerDown(screen.getByLabelText("Drag session conversation"), {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 70 });
+    expect(dialog.style.left).not.toBe(initialLeft);
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    vi.unstubAllGlobals();
     const status = screen.getByRole("status", { name: "Task status: Needs review" });
     expect(status).toHaveClass("task-status-review");
   });
@@ -98,6 +199,78 @@ describe("TaskList", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Split into new task" }));
     expect(split).toHaveBeenCalledWith("task-1", "Write documentation");
+    vi.unstubAllGlobals();
+  });
+
+  it("does not retain the previous session while switching conversations", async () => {
+    let resolveSecond: (value: {
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }) => void = () => {};
+    const secondResponse = new Promise<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          turns: [{
+            turn_index: 0,
+            user_message: "First session context",
+            assistant_response: "First response",
+          }],
+          has_earlier: false,
+        }),
+      })
+      .mockReturnValueOnce(secondResponse);
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(
+      <TaskList
+        tasks={[
+          task({
+            id: "switch-task-1",
+            session_id: "switch-session-1",
+          }),
+          task({
+            id: "switch-task-2",
+            session_id: "switch-session-2",
+            title: "Second task",
+            summary: "Second task summary",
+          }),
+        ]}
+        onConfirm={vi.fn()}
+        onReopen={vi.fn()}
+        onSplit={vi.fn()}
+        onMerge={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "View session" })[0]);
+    expect(await screen.findByText("First session context")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "View session" })[1]);
+    expect(screen.queryByText("First session context")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+
+    resolveSecond({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        turns: [{
+          turn_index: 0,
+          user_message: "Second session context",
+          assistant_response: "Second response",
+        }],
+        has_earlier: false,
+      }),
+    });
+    expect(await screen.findByText("Second session context")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

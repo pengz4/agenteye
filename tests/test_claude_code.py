@@ -20,6 +20,7 @@ from src.claude_code import (
     _session_from_transcript,
     get_claude_session_cwd,
     get_claude_session_detail,
+    get_claude_session_turns,
     get_claude_sessions,
 )
 
@@ -215,6 +216,13 @@ class TestGetClaudeSessionDetail:
         assert detail["turns"] == []
         assert detail["tool_counts"] == []
         assert detail["files"] == []
+
+    def test_paginates_turns_without_reading_unbounded_ui_page(self, claude_projects):
+        with patch("src.claude_code.CLAUDE_PROJECTS_DIR", claude_projects):
+            page = get_claude_session_turns("aaaa-1111", before=None, limit=1)
+
+        assert len(page["turns"]) == 1
+        assert page["has_earlier"] is True
 
 
 # ── _extract_text_from_content ────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ from src.scout import (
     get_running_scout_sessions,
     get_scout_session_cwd,
     get_scout_session_detail,
+    get_scout_session_turns,
     get_scout_sessions,
 )
 
@@ -170,3 +171,34 @@ def test_scout_detail_reads_db_and_recent_output(monkeypatch, tmp_path):
     assert detail["tool_counts"] == [{"name": "read_file", "count": 1}]
     assert get_recent_scout_output("scout-1111") == ["line one", "line two"]
     assert get_scout_session_cwd("scout-1111") == "C:\\Users\\test\\ScoutRepo"
+
+
+def test_scout_turns_are_bounded_and_ordered(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "session-store.db")
+    _create_scout_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO turns VALUES (?,?,?,?)",
+            ("scout-1111", 1, "Second question", "Second answer"),
+        )
+        conn.execute(
+            "INSERT INTO turns VALUES (?,?,?,?)",
+            ("scout-1111", 2, "Third question", "Third answer"),
+        )
+    monkeypatch.setattr("src.scout.SCOUT_SESSION_STORE_DB", db_path)
+
+    latest = get_scout_session_turns(
+        f"{SESSION_ID_PREFIX}scout-1111",
+        before=None,
+        limit=2,
+    )
+    earlier = get_scout_session_turns(
+        f"{SESSION_ID_PREFIX}scout-1111",
+        before=1,
+        limit=2,
+    )
+
+    assert [turn["turn_index"] for turn in latest["turns"]] == [1, 2]
+    assert latest["has_earlier"] is True
+    assert [turn["turn_index"] for turn in earlier["turns"]] == [0]
+    assert earlier["has_earlier"] is False

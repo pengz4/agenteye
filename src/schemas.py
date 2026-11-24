@@ -119,6 +119,11 @@ class SessionDetailResponse(BaseModel):
     files: list[str] = Field(default_factory=list)
 
 
+class SessionTurnsResponse(BaseModel):
+    turns: list[TurnResponse] = Field(default_factory=list)
+    has_earlier: bool = False
+
+
 # ── Files (/api/files) ──────────────────────────────────────────────────────
 
 
@@ -200,6 +205,9 @@ class TaskResponse(BaseModel):
     achievement_source_key: str | None = None
     achievement_ref: str | None = None
     coach_status: str = "off"
+    repository: str | None = None
+    branch: str | None = None
+    session_short_id: str | None = None
 
 
 class TaskSyncResponse(BaseModel):

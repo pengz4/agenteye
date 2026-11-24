@@ -639,3 +639,36 @@ def get_scout_session_detail(session_id: str) -> dict:
         "tool_counts": [{"name": k, "count": v} for k, v in tool_counter.most_common(10)],
         "files": [r["file_path"] for r in files],
     }
+
+
+def get_scout_session_turns(session_id: str, *, before: int | None, limit: int) -> dict:
+    """Return one bounded page of Scout conversation turns."""
+    raw_id = _raw_session_id(session_id)
+    try:
+        db = _get_db()
+    except FileNotFoundError:
+        return {"turns": [], "has_earlier": False}
+
+    params: list[object] = [raw_id]
+    where = ""
+    if before is not None:
+        where = " AND turn_index < ?"
+        params.append(before)
+    params.append(limit + 1)
+    try:
+        rows = db.execute(
+            "SELECT turn_index, user_message, assistant_response "
+            "FROM turns WHERE session_id = ?"
+            f"{where} ORDER BY turn_index DESC LIMIT ?",
+            params,
+        ).fetchall()
+    finally:
+        db.close()
+    page = list(rows)
+    has_earlier = len(page) > limit
+    if has_earlier:
+        page = page[:limit]
+    return {
+        "turns": [dict(row) for row in reversed(page)],
+        "has_earlier": has_earlier,
+    }

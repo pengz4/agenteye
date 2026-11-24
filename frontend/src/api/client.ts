@@ -12,6 +12,7 @@ import type {
   Session,
   SessionDetail,
   SessionPlan,
+  SessionTurnsPage,
   ProcessMap,
   FileFrequency,
   VersionInfo,
@@ -188,6 +189,19 @@ export function fetchSessions(): Promise<Session[]> {
 /** Fetch detailed info for a single session (checkpoints, turns, refs). */
 export function fetchSessionDetail(id: string): Promise<SessionDetail> {
   return get<SessionDetail>(`/api/session/${id}`);
+}
+
+/** Fetch one bounded page of conversation turns for an on-demand recall view. */
+export function fetchSessionTurns(
+  id: string,
+  options: { before?: number; limit?: number } = {},
+): Promise<SessionTurnsPage> {
+  const params = new URLSearchParams();
+  if (options.before !== undefined) params.set("before", String(options.before));
+  params.set("limit", String(options.limit ?? 10));
+  return get<SessionTurnsPage>(
+    `/api/session/${encodeURIComponent(id)}/turns?${params.toString()}`,
+  );
 }
 
 /** Fetch the rendered plan metadata/content for a single session. */

@@ -349,24 +349,11 @@ def _build_restart_cmd(session_id: str, cwd: str) -> str:
 # ── Session detail ───────────────────────────────────────────────────────────
 
 
-def get_claude_session_detail(session_id: str) -> dict:
-    """Read detailed info for a single Claude Code session.
-
-    Parses the transcript JSONL to extract turns and tool counts.
-    session_id should be the raw ID (without the cc: prefix).
-    """
-    result: dict = {
-        "checkpoints": [],
-        "refs": [],
-        "turns": [],
-        "recent_output": [],
-        "tool_counts": [],
-        "files": [],
-    }
-
+def _read_claude_transcript(session_id: str) -> tuple[list[dict], Counter, set[str]]:
+    """Parse conversation turns and usage metadata from a Claude transcript."""
     transcript = _find_transcript(session_id)
     if not transcript:
-        return result
+        return [], Counter(), set()
 
     turns: list[dict] = []
     tool_counter: Counter = Counter()
@@ -425,7 +412,36 @@ def get_claude_session_detail(session_id: str) -> dict:
     except Exception as e:
         logger.debug("Error reading Claude transcript %s: %s", transcript, e)
 
-    # Return last 10 turns like Copilot detail does
+    return turns, tool_counter, files_seen
+
+
+def get_claude_session_turns(session_id: str, *, before: int | None, limit: int) -> dict:
+    """Return one bounded page of Claude conversation turns."""
+    turns, _tool_counter, _files_seen = _read_claude_transcript(session_id)
+    if before is not None:
+        turns = [turn for turn in turns if turn["turn_index"] < before]
+    page = turns[-(limit + 1) :]
+    has_earlier = len(page) > limit
+    if has_earlier:
+        page = page[1:]
+    return {"turns": page, "has_earlier": has_earlier}
+
+
+def get_claude_session_detail(session_id: str) -> dict:
+    """Read detailed info for a single Claude Code session.
+
+    Parses the transcript JSONL to extract turns and tool counts.
+    session_id should be the raw ID (without the cc: prefix).
+    """
+    result: dict = {
+        "checkpoints": [],
+        "refs": [],
+        "turns": [],
+        "recent_output": [],
+        "tool_counts": [],
+        "files": [],
+    }
+    turns, tool_counter, files_seen = _read_claude_transcript(session_id)
     result["turns"] = turns[-10:]
     result["tool_counts"] = [{"name": k, "count": v} for k, v in tool_counter.most_common(10)]
     result["files"] = sorted(files_seen)

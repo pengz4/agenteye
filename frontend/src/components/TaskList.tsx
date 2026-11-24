@@ -1,5 +1,6 @@
+import { useMemo, useState } from "react";
 import type { AgentTask } from "../types";
-
+import SessionConversationOverlay from "./SessionConversationOverlay";
 
 interface TaskListProps {
   tasks: AgentTask[];
@@ -24,6 +25,45 @@ const TASK_STATUS: Record<
   merged: { label: "Merged", tone: "neutral" },
 };
 
+const GENERIC_PROMPTS = [
+  /^reply\s+exactly\s+ready\.?$/i,
+  /^(continue|go ahead|please continue|resume|yes|ok|okay|done)\.?$/i,
+  /^(继续|可以|好的|确认|执行|开始|好)[。！!？?]*$/u,
+];
+
+function isGenericPrompt(value: string): boolean {
+  const normalized = value.trim();
+  return GENERIC_PROMPTS.some((pattern) => pattern.test(normalized));
+}
+
+function projectName(task: AgentTask): string {
+  if (task.repository) return task.repository.split("/").pop() || task.repository;
+  return task.cwd.split(/[\\/]/).filter(Boolean).pop() || "Unknown project";
+}
+
+function displayTitle(task: AgentTask): string {
+  const title = task.title.trim();
+  const summary = task.summary?.trim() || "";
+  if (title && !isGenericPrompt(title)) return title;
+  if (summary && !isGenericPrompt(summary)) return summary;
+  return `${projectName(task)} review`;
+}
+
+function identityParts(task: AgentTask): string {
+  const project = projectName(task);
+  const branch = task.branch ? ` · ${task.branch}` : "";
+  const rawSessionId = task.session_id.replace(/^(cc:|scout:)/, "");
+  const session = task.session_short_id || rawSessionId.slice(0, 6);
+  return `${task.source} · ${project}${branch} · session ${session}`;
+}
+
+function groupKey(task: AgentTask): string {
+  return (task.summary || task.title)
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase();
+}
+
 function TaskCard({
   task,
   tasks,
@@ -35,7 +75,8 @@ function TaskCard({
   onRequestAchievement,
   onSkipAchievement,
   onRequestCoach,
-}: TaskListProps & { task: AgentTask }) {
+  onViewSession,
+}: TaskListProps & { task: AgentTask; onViewSession: (task: AgentTask) => void }) {
   const pendingLabel = pendingActions[task.id];
   const isPending = Boolean(pendingLabel);
   const status = TASK_STATUS[task.status];
@@ -49,47 +90,52 @@ function TaskCard({
     const title = window.prompt("Title for the new task");
     if (title?.trim()) onSplit(task.id, title.trim());
   };
+  const title = displayTitle(task);
+  const latestPrompt = task.summary || task.title;
 
   return (
-    <article className="session-card" style={{ padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 6 }}>
-            {task.source} · {task.start_date}
+    <article className="session-card task-review-card">
+      <div className="task-review-card-head">
+        <div className="task-review-content">
+          <div className="task-review-identity">{identityParts(task)}</div>
+          <h3>{title}</h3>
+          {latestPrompt && (
+            <p className="task-review-prompt">
+              <span>{isGenericPrompt(latestPrompt) ? "Latest prompt" : "Summary"}</span>
+              {latestPrompt}
+            </p>
+          )}
+          <div className="task-review-meta">
+            <span>Started {task.start_date}</span>
+            <span>Turn {task.last_turn_index + 1}</span>
+            <span>Updated {new Date(task.updated_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}</span>
           </div>
-          <h3 style={{ margin: 0, overflowWrap: "anywhere" }}>{task.title}</h3>
-          <p style={{ color: "var(--text-secondary)", margin: "8px 0 0" }}>
-            {task.summary}
-          </p>
           {task.obsidian_path && (
-            <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
+            <div className="task-review-reference">
               Obsidian: {task.obsidian_path}
             </div>
           )}
           {task.achievement_status === "candidate" && (
-            <div style={{ color: "var(--yellow)", fontSize: 12, marginTop: 8 }}>
+            <div className="task-review-note is-warn">
               Achievement intake is evaluating this task automatically
             </div>
           )}
           {task.achievement_status === "linked" && (
-            <div style={{ color: "var(--green)", fontSize: 12, marginTop: 8 }}>
+            <div className="task-review-note is-success">
               Achievement linked: {task.achievement_ref}
             </div>
           )}
           {task.achievement_status === "pending_intake" && (
-            <div style={{ color: "var(--yellow)", fontSize: 12, marginTop: 8 }}>
-              Achievement intake pending
-            </div>
+            <div className="task-review-note is-warn">Achievement intake pending</div>
           )}
           {task.achievement_status === "skipped" && (
-            <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
-              Achievement skipped
-            </div>
+            <div className="task-review-reference">Achievement skipped</div>
           )}
           {task.coach_status === "pending" && (
-            <div style={{ color: "var(--yellow)", fontSize: 12, marginTop: 4 }}>
-              AI Coach practice pending
-            </div>
+            <div className="task-review-note is-warn">AI Coach practice pending</div>
           )}
         </div>
         <span
@@ -102,7 +148,7 @@ function TaskCard({
         </span>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+      <div className="task-review-actions">
         {isPending && (
           <div
             className="task-pending-status"
@@ -114,6 +160,13 @@ function TaskCard({
             {pendingLabel}
           </div>
         )}
+        <button
+          className="view-btn"
+          aria-label="View session"
+          onClick={() => onViewSession(task)}
+        >
+          View session
+        </button>
         {task.status === "completed" ? (
           <button
             className="view-btn"
@@ -154,35 +207,31 @@ function TaskCard({
             <option value="" disabled>Merge with…</option>
             {mergeOptions.map((candidate) => (
               <option key={candidate.id} value={candidate.id}>
-                {candidate.title}
+                {displayTitle(candidate)}
               </option>
             ))}
           </select>
         )}
-        {task.status === "completed" &&
-          task.achievement_status === "candidate" && (
-            <>
-              <button
-                className="view-btn"
-                aria-label="Skip achievement"
-                onClick={() => onSkipAchievement?.(task.id)}
-                disabled={isPending}
-              >
-                Skip
-              </button>
-            </>
-          )}
-        {task.status === "completed" &&
-          task.achievement_status === "skipped" && (
-            <button
-              className="view-btn"
-              aria-label="Review achievement again"
-              onClick={() => onRequestAchievement?.(task.id)}
-              disabled={isPending}
-            >
-              Review Again
-            </button>
-          )}
+        {task.status === "completed" && task.achievement_status === "candidate" && (
+          <button
+            className="view-btn"
+            aria-label="Skip achievement"
+            onClick={() => onSkipAchievement?.(task.id)}
+            disabled={isPending}
+          >
+            Skip
+          </button>
+        )}
+        {task.status === "completed" && task.achievement_status === "skipped" && (
+          <button
+            className="view-btn"
+            aria-label="Review achievement again"
+            onClick={() => onRequestAchievement?.(task.id)}
+            disabled={isPending}
+          >
+            Review Again
+          </button>
+        )}
         {task.achievement_status === "linked" &&
           task.coach_status === "needs_confirmation" && (
             <button
@@ -200,32 +249,126 @@ function TaskCard({
 }
 
 export default function TaskList(props: TaskListProps) {
-  const visible = props.tasks
-    .filter((task) => task.status === "awaiting_confirmation" ||
-      task.status === "blocked" ||
-      task.status === "completed")
-    .sort((a, b) => {
-      const aCompleted = a.status === "completed";
-      const bCompleted = b.status === "completed";
-      if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
-      return aCompleted
-        ? a.updated_at.localeCompare(b.updated_at)
-        : b.updated_at.localeCompare(a.updated_at);
-    });
+  const [query, setQuery] = useState("");
+  const [source, setSource] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [conversationTask, setConversationTask] = useState<AgentTask | null>(null);
 
-  if (visible.length === 0) {
-    return (
-      <div className="empty-state">
-        No tasks need review.
-      </div>
-    );
-  }
+  const visible = useMemo(
+    () =>
+      props.tasks
+        .filter((task) =>
+          task.status === "awaiting_confirmation" ||
+          task.status === "blocked" ||
+          task.status === "completed",
+        )
+        .filter((task) => status === "all" || (status === "pending" ? task.status !== "completed" : task.status === status))
+        .filter((task) => source === "all" || task.source === source)
+        .filter((task) => {
+          const needle = query.trim().toLocaleLowerCase();
+          if (!needle) return true;
+          return [
+            displayTitle(task),
+            task.title,
+            task.summary,
+            task.repository,
+            task.branch,
+            task.session_id,
+            task.cwd,
+          ].some((value) => String(value || "").toLocaleLowerCase().includes(needle));
+        })
+        .sort((a, b) => {
+          const aCompleted = a.status === "completed";
+          const bCompleted = b.status === "completed";
+          if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+          return aCompleted
+            ? a.updated_at.localeCompare(b.updated_at)
+            : b.updated_at.localeCompare(a.updated_at);
+        }),
+    [props.tasks, query, source, status],
+  );
+
+  const groups = useMemo(() => {
+    const result = new Map<string, AgentTask[]>();
+    visible.forEach((task) => {
+      const key = `${task.status}:${groupKey(task)}`;
+      const existing = result.get(key) || [];
+      existing.push(task);
+      result.set(key, existing);
+    });
+    return [...result.values()];
+  }, [visible]);
+
+  const availableSources = [...new Set(props.tasks.map((task) => task.source))];
 
   return (
-    <div className="session-grid">
-      {visible.map((task) => (
-        <TaskCard key={task.id} task={task} {...props} />
-      ))}
-    </div>
+    <>
+      <div className="task-review-toolbar">
+        <label className="task-review-search">
+          <span>Search reviews</span>
+          <input
+            type="search"
+            aria-label="Search task reviews"
+            placeholder="Task, project, branch, or session…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Status</span>
+          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="pending">Pending</option>
+            <option value="blocked">Blocked</option>
+            <option value="completed">Completed only</option>
+            <option value="all">All reviews</option>
+          </select>
+        </label>
+        <label>
+          <span>Agent</span>
+          <select value={source} onChange={(event) => setSource(event.target.value)}>
+            <option value="all">All agents</option>
+            {availableSources.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        <strong className="task-review-count">{visible.length} of {props.tasks.length}</strong>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="empty-state">No tasks need review.</div>
+      ) : (
+        <div className="task-review-list">
+          {groups.map((group) => (
+            <section
+              className={`task-review-group ${group.length > 1 ? "is-duplicate" : ""}`}
+              key={group.map((task) => task.id).join(":")}
+            >
+              {group.length > 1 && (
+                <div className="task-review-group-head">
+                  <strong>{group.length} matching reviews</strong>
+                  <span>{group[0].summary || group[0].title}</span>
+                </div>
+              )}
+              {group.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  {...props}
+                  onViewSession={setConversationTask}
+                />
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
+
+      {conversationTask && (
+        <SessionConversationOverlay
+          key={conversationTask.id}
+          task={conversationTask}
+          title={displayTitle(conversationTask)}
+          onClose={() => setConversationTask(null)}
+        />
+      )}
+    </>
   );
 }

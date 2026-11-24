@@ -8,6 +8,7 @@ import {
   fetchSessions,
   fetchProcesses,
   fetchSessionDetail,
+  fetchSessionTurns,
   fetchSessionPlan,
   fetchFiles,
   fetchVersion,
@@ -60,6 +61,15 @@ describe("API client", () => {
       const result = await fetchSessionDetail("test-id");
       expect(mockFetch).toHaveBeenCalledWith(`/api/session/test-id${T}`);
       expect(result).toEqual({ checkpoints: [] });
+    });
+
+    it("fetchSessionTurns requests one bounded conversation page", async () => {
+      mockFetch.mockReturnValue(jsonResponse({ turns: [], has_earlier: false }));
+      const result = await fetchSessionTurns("session-1", { before: 12, limit: 8 });
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/session/session-1/turns?before=12&limit=8&token=test-token",
+      );
+      expect(result).toEqual({ turns: [], has_earlier: false });
     });
 
     it("fetchSessionPlan calls /api/session/:id/plan", async () => {

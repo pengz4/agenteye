@@ -28,7 +28,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +41,7 @@ from .claude_code import (
 from .claude_code import (
     get_claude_session_cwd,
     get_claude_session_detail,
+    get_claude_session_turns,
     get_claude_sessions,
     get_running_claude_sessions,
 )
@@ -86,6 +87,7 @@ from .schemas import (
     ServerInfoResponse,
     SessionDetailResponse,
     SessionResponse,
+    SessionTurnsResponse,
     SettingsResponse,
     TaskMergeRequest,
     TaskResponse,
@@ -100,6 +102,7 @@ from .scout import (
     get_running_scout_sessions,
     get_scout_session_cwd,
     get_scout_session_detail,
+    get_scout_session_turns,
     get_scout_sessions,
 )
 from .sync import export_sessions, read_remote_sessions, resolve_sync_folder
@@ -896,7 +899,8 @@ def api_tasks(status: str | None = None):
     allowed = {"active", "awaiting_confirmation", "completed", "blocked"}
     if status is not None and status not in allowed:
         return JSONResponse({"error": "Invalid task status"}, status_code=400)
-    return _get_task_store().list(status)
+    sessions = _build_session_list()
+    return _enrich_tasks_with_sessions(_get_task_store().list(status), sessions)
 
 
 @app.get("/api/control-plane")
@@ -949,18 +953,40 @@ def api_obsidian_overview():
 @app.post("/api/tasks/sync", response_model=TaskSyncResponse)
 def api_tasks_sync():
     """Reconcile current sessions and publish changed tasks."""
+    sessions = _build_session_list()
     with _task_sync_lock:
-        reconciled = _reconcile_tasks()
+        reconciled = _reconcile_tasks(sessions)
         obsidian_synced, obsidian_status = _sync_tasks_to_obsidian()
         achievement_linked, coach_staged = _reconcile_achievement_handoff()
     return {
-        "tasks": _get_task_store().list(),
+        "tasks": _enrich_tasks_with_sessions(_get_task_store().list(), sessions),
         "reconciled": len(reconciled),
         "obsidian_synced": obsidian_synced,
         "obsidian_status": obsidian_status,
         "achievement_linked": achievement_linked,
         "coach_staged": coach_staged,
     }
+
+
+def _enrich_tasks_with_sessions(tasks: list[dict], sessions: list[dict]) -> list[dict]:
+    """Attach stable session identity to tasks without persisting conversation data."""
+    sessions_by_id = {str(session["id"]): session for session in sessions}
+    enriched: list[dict] = []
+    for task in tasks:
+        session = sessions_by_id.get(str(task["session_id"]), {})
+        cwd = str(task.get("cwd") or "")
+        repository = session.get("repository")
+        if not repository and cwd:
+            repository = Path(cwd.replace("\\", "/")).name or None
+        enriched.append(
+            {
+                **task,
+                "repository": repository,
+                "branch": session.get("branch"),
+                "session_short_id": re.sub(r"^(cc:|scout:)", "", str(task["session_id"]))[:6],
+            }
+        )
+    return enriched
 
 
 @app.post("/api/task/{task_id}/confirm", response_model=TaskResponse)
@@ -1097,6 +1123,61 @@ def api_session_plan(session_id: str):
         "mtime": mtime,
         "progress": _calculate_plan_progress(content),
     }
+
+
+def _copilot_session_turns(session_id: str, *, before: int | None, limit: int) -> dict:
+    try:
+        db = get_db()
+    except FileNotFoundError:
+        return {"turns": [], "has_earlier": False}
+
+    params: list[object] = [session_id]
+    where = ""
+    if before is not None:
+        where = " AND turn_index < ?"
+        params.append(before)
+    params.append(limit + 1)
+    try:
+        rows = db.execute(
+            "SELECT turn_index, user_message, assistant_response "
+            "FROM turns WHERE session_id = ?"
+            f"{where} ORDER BY turn_index DESC LIMIT ?",
+            params,
+        ).fetchall()
+    finally:
+        db.close()
+    page = list(rows)
+    has_earlier = len(page) > limit
+    if has_earlier:
+        page = page[:limit]
+    return {
+        "turns": [dict(row) for row in reversed(page)],
+        "has_earlier": has_earlier,
+    }
+
+
+@app.get(
+    "/api/session/{session_id:path}/turns",
+    response_model=SessionTurnsResponse,
+)
+def api_session_turns(
+    session_id: str,
+    before: int | None = None,
+    limit: int = Query(default=10, ge=1, le=20),
+):
+    """Return a bounded, chronological page of read-only conversation turns."""
+    err = _validate_session_id(session_id)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    if session_id.startswith(CC_PREFIX):
+        return get_claude_session_turns(
+            session_id[len(CC_PREFIX) :],
+            before=before,
+            limit=limit,
+        )
+    if session_id.startswith(SCOUT_PREFIX):
+        return get_scout_session_turns(session_id, before=before, limit=limit)
+    return _copilot_session_turns(session_id, before=before, limit=limit)
 
 
 @app.get("/api/session/{session_id:path}", response_model=SessionDetailResponse)

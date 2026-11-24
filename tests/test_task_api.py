@@ -52,6 +52,25 @@ def test_task_sync_creates_task_from_latest_user_turn(client, tmp_path):
     assert task["last_turn_index"] == 0
 
 
+def test_task_sync_enriches_session_identity(client, tmp_path):
+    session = {
+        **ACTIVE_SESSION,
+        "repository": "porsche/personal-agent-skills",
+        "branch": "main",
+    }
+    with (
+        patch("src.dashboard_api.TASK_STORE_DB", str(tmp_path / "tasks.db")),
+        patch("src.dashboard_api._build_session_list", return_value=[session]),
+        patch("src.dashboard_api.api_session_detail", side_effect=lambda _sid: _session_detail()),
+    ):
+        response = client.post("/api/tasks/sync")
+
+    task = response.json()["tasks"][0]
+    assert task["repository"] == "porsche/personal-agent-skills"
+    assert task["branch"] == "main"
+    assert task["session_short_id"] == "sessio"
+
+
 def test_idle_task_is_listed_as_awaiting_confirmation(client, tmp_path):
     idle = {**ACTIVE_SESSION, "state": "idle"}
     with (

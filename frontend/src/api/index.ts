@@ -2,6 +2,7 @@ export {
   fetchSessions,
   fetchProcesses,
   fetchSessionDetail,
+  fetchSessionTurns,
   fetchSessionPlan,
   fetchFiles,
   fetchRemoteSessions,

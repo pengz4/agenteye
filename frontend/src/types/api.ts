@@ -105,6 +105,11 @@ export interface SessionDetail {
   files: string[];
 }
 
+export interface SessionTurnsPage {
+  turns: Turn[];
+  has_earlier: boolean;
+}
+
 /** Map of session_id → ProcessInfo from GET /api/processes. */
 export type ProcessMap = Record<string, ProcessInfo>;
 
@@ -273,6 +278,9 @@ export interface AgentTask {
     | "pending"
     | "generated"
     | "skipped";
+  repository?: string | null;
+  branch?: string | null;
+  session_short_id?: string | null;
 }
 
 export interface TaskSyncResult {

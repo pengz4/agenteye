@@ -376,6 +376,33 @@ class TestApiSessionDetail:
         assert data["files"] == []
 
 
+class TestApiSessionTurns:
+    def test_returns_bounded_pages_in_chronological_order(self, client, populated_db):
+        conn, db_path = populated_db
+        conn.execute(
+            "INSERT INTO turns VALUES (?,?,?,?)",
+            ("sess-1", 1, "Second question", "Second answer"),
+        )
+        conn.execute(
+            "INSERT INTO turns VALUES (?,?,?,?)",
+            ("sess-1", 2, "Reply exactly READY.", "READY."),
+        )
+        conn.commit()
+
+        with patch("src.dashboard_api.DB_PATH", db_path):
+            latest = client.get("/api/session/sess-1/turns", params={"limit": 2})
+            earlier = client.get(
+                "/api/session/sess-1/turns",
+                params={"before": 1, "limit": 2},
+            )
+
+        assert latest.status_code == 200
+        assert [turn["turn_index"] for turn in latest.json()["turns"]] == [1, 2]
+        assert latest.json()["has_earlier"] is True
+        assert [turn["turn_index"] for turn in earlier.json()["turns"]] == [0]
+        assert earlier.json()["has_earlier"] is False
+
+
 class TestApiFiles:
     def test_returns_file_list(self, client, populated_db):
         _conn, db_path = populated_db
