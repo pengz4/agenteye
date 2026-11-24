@@ -25,7 +25,7 @@ import urllib.request
 from collections import Counter, OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
@@ -43,6 +43,7 @@ from .claude_code import (
     get_claude_session_detail,
     get_claude_session_identities,
     get_claude_session_turns,
+    get_claude_session_updates,
     get_claude_sessions,
     get_running_claude_sessions,
 )
@@ -87,6 +88,7 @@ from .schemas import (
     PlanResponse,
     ProcessResponse,
     ServerInfoResponse,
+    SessionCountsResponse,
     SessionDetailResponse,
     SessionResponse,
     SessionTurnsResponse,
@@ -106,6 +108,7 @@ from .scout import (
     get_scout_session_detail,
     get_scout_session_identities,
     get_scout_session_turns,
+    get_scout_session_updates,
     get_scout_sessions,
 )
 from .sync import export_sessions, read_remote_sessions, resolve_sync_folder
@@ -904,6 +907,56 @@ def _reconcile_achievement_handoff() -> tuple[int, int]:
 def api_sessions():
     """List all sessions with enriched metadata."""
     return _build_session_list()
+
+
+def _recent_session_ids(active_ids: set[str] | None = None) -> set[str]:
+    """Return recent visible session IDs without enriching session payloads."""
+    cutoff = datetime.now(UTC) - timedelta(days=5)
+    updates: dict[str, str] = {}
+    try:
+        db = get_db()
+        try:
+            rows = db.execute("SELECT id, updated_at FROM sessions").fetchall()
+            updates.update({str(row["id"]): str(row["updated_at"] or "") for row in rows})
+        finally:
+            db.close()
+    except FileNotFoundError:
+        if os.path.isdir(SESSION_STATE_DIR):
+            try:
+                for session_id in os.listdir(SESSION_STATE_DIR):
+                    events_file = os.path.join(SESSION_STATE_DIR, session_id, "events.jsonl")
+                    try:
+                        mtime = os.path.getmtime(events_file)
+                    except OSError:
+                        continue
+                    updates[session_id] = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
+            except OSError:
+                pass
+
+    updates.update(get_claude_session_updates())
+    updates.update(get_scout_session_updates())
+    recent: set[str] = set()
+    for session_id, value in updates.items():
+        try:
+            updated = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            continue
+        if updated >= cutoff:
+            recent.add(session_id)
+    if active_ids:
+        recent.update(active_ids & updates.keys())
+    return recent - _get_hidden_session_ids()
+
+
+@app.get("/api/session-counts", response_model=SessionCountsResponse)
+def api_session_counts(active_ids: str = ""):
+    """Return sidebar counts from indexed session metadata."""
+    supplied_active = {value.strip() for value in active_ids.split(",") if value.strip()}
+    recent_ids = _recent_session_ids(supplied_active)
+    active = len(supplied_active & recent_ids)
+    return {"active": active, "previous": len(recent_ids - supplied_active)}
 
 
 @app.get("/api/tasks", response_model=list[TaskResponse])

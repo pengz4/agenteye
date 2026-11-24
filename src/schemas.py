@@ -119,6 +119,11 @@ class SessionDetailResponse(BaseModel):
     files: list[str] = Field(default_factory=list)
 
 
+class SessionCountsResponse(BaseModel):
+    active: int
+    previous: int
+
+
 class SessionTurnsResponse(BaseModel):
     turns: list[TurnResponse] = Field(default_factory=list)
     has_earlier: bool = False

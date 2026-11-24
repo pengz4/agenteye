@@ -1,5 +1,6 @@
 export {
   fetchSessions,
+  fetchSessionCounts,
   fetchProcesses,
   fetchSessionDetail,
   fetchSessionTurns,

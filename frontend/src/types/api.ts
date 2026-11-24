@@ -95,6 +95,11 @@ export interface SessionPlan {
   progress: PlanProgress | null;
 }
 
+export interface SessionCounts {
+  active: number;
+  previous: number;
+}
+
 /** Full response from GET /api/session/:id. */
 export interface SessionDetail {
   checkpoints: Checkpoint[];

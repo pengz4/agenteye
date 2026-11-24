@@ -8,7 +8,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { AppProvider, useAppState, useAppDispatch } from "../state";
 import type { Tab } from "../state";
-import { useSessions, useTasks } from "../hooks";
+import { useSessionCounts, useSessions, useTasks } from "../hooks";
 import { fetchServerInfo } from "../api";
 import { filterSessions, splitActivePrevious } from "../utils";
 import Header from "./Header";
@@ -87,6 +87,15 @@ function Dashboard() {
   // Derived data: filter → split active/previous
   const filtered = filterSessions(sessions, searchFilter);
   const { active, previous } = splitActivePrevious(filtered, processes);
+  const usesLightSessionCounts =
+    currentTab !== "active" &&
+    currentTab !== "previous" &&
+    currentTab !== "timeline" &&
+    currentTab !== "files";
+  const lightSessionCounts = useSessionCounts(
+    Object.keys(processes),
+    usesLightSessionCounts,
+  );
 
   // Waiting count for header badge
   const waitingCount = Object.values(processes).filter(
@@ -117,15 +126,9 @@ function Dashboard() {
   return (
     <div className="app-shell">
       <WorkspaceSidebar
-        activeCount={active.length}
-        previousCount={previous.length}
+        activeCount={usesLightSessionCounts ? lightSessionCounts.active : active.length}
+        previousCount={usesLightSessionCounts ? lightSessionCounts.previous : previous.length}
         taskCount={taskState.reviewCount}
-        showSessionCounts={
-          currentTab === "active" ||
-          currentTab === "previous" ||
-          currentTab === "timeline" ||
-          currentTab === "files"
-        }
       />
 
       <div className="workspace-main">

@@ -1,7 +1,7 @@
+import sqlite3
 from unittest.mock import patch
 
 from src.task_store import TaskStore
-
 
 ACTIVE_SESSION = {
     "id": "session-1",
@@ -136,6 +136,74 @@ def test_task_list_preserves_claude_identity_without_full_rebuild(client, tmp_pa
     assert response.json()[0]["branch"] == "feature/task-context"
 
 
+def test_session_counts_are_available_without_building_session_list(client):
+    with (
+        patch(
+            "src.dashboard_api._recent_session_ids",
+            return_value={"running", "recent-a", "recent-b"},
+        ),
+        patch(
+            "src.dashboard_api._build_session_list",
+            side_effect=AssertionError("counts must not scan every session"),
+        ),
+    ):
+        response = client.get(
+            "/api/session-counts",
+            params={"active_ids": "running,unknown"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": 1, "previous": 2}
+
+
+def test_session_counts_keep_old_running_sessions(client, tmp_path):
+    db_path = tmp_path / "session-store.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            updated_at TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO sessions VALUES (?, ?)",
+        ("old-running", "2026-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+    with (
+        patch("src.dashboard_api.DB_PATH", str(db_path)),
+        patch("src.dashboard_api.get_claude_session_updates", return_value={}),
+        patch("src.dashboard_api.get_scout_session_updates", return_value={}),
+        patch("src.dashboard_api._get_hidden_session_ids", return_value=set()),
+    ):
+        response = client.get(
+            "/api/session-counts",
+            params={"active_ids": "old-running"},
+        )
+
+    assert response.json() == {"active": 1, "previous": 0}
+
+
+def test_session_counts_fall_back_to_event_directories(client, tmp_path):
+    state_dir = tmp_path / "session-state"
+    session_dir = state_dir / "recent-events"
+    session_dir.mkdir(parents=True)
+    (session_dir / "events.jsonl").write_text("{}", encoding="utf-8")
+    with (
+        patch("src.dashboard_api.DB_PATH", str(tmp_path / "missing.db")),
+        patch("src.dashboard_api.SESSION_STATE_DIR", str(state_dir)),
+        patch("src.dashboard_api.get_claude_session_updates", return_value={}),
+        patch("src.dashboard_api.get_scout_session_updates", return_value={}),
+        patch("src.dashboard_api._get_hidden_session_ids", return_value=set()),
+    ):
+        response = client.get("/api/session-counts")
+
+    assert response.json() == {"active": 0, "previous": 1}
+
+
 def test_confirm_reopen_split_and_merge_task_actions(client, tmp_path):
     with (
         patch("src.dashboard_api.TASK_STORE_DB", str(tmp_path / "tasks.db")),
@@ -263,9 +331,7 @@ def test_dashboard_reopen_remains_active_on_next_idle_sync(client, tmp_path):
     assert reopened["status"] == "active"
 
 
-def test_merged_tombstone_does_not_overwrite_target_after_session_closes(
-    client, tmp_path
-):
+def test_merged_tombstone_does_not_overwrite_target_after_session_closes(client, tmp_path):
     with (
         patch("src.dashboard_api.TASK_STORE_DB", str(tmp_path / "tasks.db")),
         patch("src.dashboard_api._build_session_list", return_value=[ACTIVE_SESSION]),
@@ -298,15 +364,13 @@ def test_merged_tombstone_does_not_overwrite_target_after_session_closes(
         patch("src.dashboard_api._build_session_list", return_value=[]),
     ):
         client.post("/api/tasks/sync")
-        target = client.get(f"/api/tasks").json()
+        target = client.get("/api/tasks").json()
         surviving = next(task for task in target if task["id"] == original["id"])
 
     assert surviving["summary"] == "Current target summary"
 
 
-def test_task_sync_links_existing_achievement_and_applies_coach_ask_mode(
-    client, tmp_path
-):
+def test_task_sync_links_existing_achievement_and_applies_coach_ask_mode(client, tmp_path):
     task_db = tmp_path / "tasks.db"
     ledger = tmp_path / "ACHIEVEMENT_LOG.md"
     outbox = tmp_path / "intake.jsonl"
@@ -327,7 +391,7 @@ def test_task_sync_links_existing_achievement_and_applies_coach_ask_mode(
         ledger.write_text(
             f"""
 ### 2026-11-20 — Built dashboard
-- Evidence: verified API and UI; `{task['achievement_source_key']}`
+- Evidence: verified API and UI; `{task["achievement_source_key"]}`
 """,
             encoding="utf-8",
         )
@@ -341,9 +405,7 @@ def test_task_sync_links_existing_achievement_and_applies_coach_ask_mode(
     assert not coach_outbox.exists()
 
 
-def test_achievement_request_is_idempotent_and_skip_only_changes_intake_state(
-    client, tmp_path
-):
+def test_achievement_request_is_idempotent_and_skip_only_changes_intake_state(client, tmp_path):
     task_db = tmp_path / "tasks.db"
     outbox = tmp_path / "intake.jsonl"
     ledger = tmp_path / "ACHIEVEMENT_LOG.md"
@@ -387,8 +449,7 @@ def test_coach_mode_auto_creates_one_downstream_request(client, tmp_path):
         task = client.post("/api/tasks/sync").json()["tasks"][0]
         task = client.post(f"/api/task/{task['id']}/confirm").json()
         ledger.write_text(
-            f"### 2026-11-20 — AI agent workflow\n- Evidence: `"
-            f"{task['achievement_source_key']}`\n",
+            f"### 2026-11-20 — AI agent workflow\n- Evidence: `{task['achievement_source_key']}`\n",
             encoding="utf-8",
         )
         linked = client.post("/api/tasks/sync").json()["tasks"][0]

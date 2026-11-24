@@ -668,6 +668,37 @@ def get_scout_session_identities(session_ids: set[str]) -> list[dict]:
     ]
 
 
+def get_scout_session_updates() -> dict[str, str]:
+    """Return lightweight Scout session update timestamps."""
+    try:
+        db = _get_db()
+    except FileNotFoundError:
+        db = None
+    if db is not None:
+        try:
+            rows = db.execute("SELECT id, updated_at FROM sessions").fetchall()
+            return {
+                SESSION_ID_PREFIX + str(row["id"]): str(row["updated_at"] or "") for row in rows
+            }
+        finally:
+            db.close()
+
+    updates: dict[str, str] = {}
+    if not os.path.isdir(SCOUT_SESSION_STATE_DIR):
+        return updates
+    try:
+        for raw_id in os.listdir(SCOUT_SESSION_STATE_DIR):
+            path = _events_file(raw_id)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            updates[SESSION_ID_PREFIX + raw_id] = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
+    except OSError:
+        pass
+    return updates
+
+
 def get_scout_session_turns(session_id: str, *, before: int | None, limit: int) -> dict:
     """Return one bounded page of Scout conversation turns."""
     raw_id = _raw_session_id(session_id)

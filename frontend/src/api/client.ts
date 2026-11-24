@@ -13,6 +13,7 @@ import type {
   SessionDetail,
   SessionPlan,
   SessionTurnsPage,
+  SessionCounts,
   ProcessMap,
   FileFrequency,
   VersionInfo,
@@ -184,6 +185,12 @@ export function requestCoachPractice(id: string): Promise<AgentTask> {
 /** Fetch all sessions with enriched metadata (groups, restart cmds, etc.). */
 export function fetchSessions(): Promise<Session[]> {
   return get<Session[]>("/api/sessions");
+}
+
+export function fetchSessionCounts(activeIds: string[]): Promise<SessionCounts> {
+  const params = new URLSearchParams();
+  params.set("active_ids", [...activeIds].sort().join(","));
+  return get<SessionCounts>(`/api/session-counts?${params.toString()}`);
 }
 
 /** Fetch detailed info for a single session (checkpoints, turns, refs). */

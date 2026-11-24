@@ -5,7 +5,6 @@ interface WorkspaceSidebarProps {
   activeCount: number;
   previousCount: number;
   taskCount: number;
-  showSessionCounts?: boolean;
 }
 
 const NAV_GROUPS: {
@@ -40,7 +39,6 @@ export default function WorkspaceSidebar({
   activeCount,
   previousCount,
   taskCount,
-  showSessionCounts = true,
 }: WorkspaceSidebarProps) {
   const { currentTab } = useAppState();
   const dispatch = useAppDispatch();
@@ -81,10 +79,9 @@ export default function WorkspaceSidebar({
               >
                 <span className="workspace-nav-icon" aria-hidden="true">{item.icon}</span>
                 <span>{item.label}</span>
-                {counts[item.key] !== undefined &&
-                  (item.key === "tasks" || showSessionCounts) && (
-                    <span className="workspace-nav-count">{counts[item.key]}</span>
-                  )}
+                {counts[item.key] !== undefined && (
+                  <span className="workspace-nav-count">{counts[item.key]}</span>
+                )}
               </button>
             ))}
           </div>

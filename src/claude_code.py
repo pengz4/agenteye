@@ -507,6 +507,47 @@ def get_claude_session_identities(session_ids: set[str]) -> list[dict]:
     return identities
 
 
+def get_claude_session_updates() -> dict[str, str]:
+    """Return lightweight session update timestamps without reading transcripts."""
+    updates: dict[str, str] = {}
+    if not os.path.isdir(CLAUDE_PROJECTS_DIR):
+        return updates
+    for project_dir_name in os.listdir(CLAUDE_PROJECTS_DIR):
+        project_path = os.path.join(CLAUDE_PROJECTS_DIR, project_dir_name)
+        if not os.path.isdir(project_path):
+            continue
+        index_file = os.path.join(project_path, "sessions-index.json")
+        indexed: set[str] = set()
+        try:
+            with open(index_file, encoding="utf-8") as f:
+                entries = json.load(f).get("entries", [])
+        except (OSError, ValueError, TypeError):
+            entries = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("sessionId"):
+                continue
+            raw_id = str(entry["sessionId"])
+            indexed.add(raw_id)
+            updates[SESSION_ID_PREFIX + raw_id] = str(
+                entry.get("modified") or entry.get("created") or ""
+            )
+        try:
+            for filename in os.listdir(project_path):
+                if not filename.endswith(".jsonl") or filename[:-6] in indexed:
+                    continue
+                path = os.path.join(project_path, filename)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                updates[SESSION_ID_PREFIX + filename[:-6]] = datetime.fromtimestamp(
+                    mtime, tz=UTC
+                ).isoformat()
+        except OSError:
+            continue
+    return updates
+
+
 def _extract_text_from_content(content) -> str:
     """Extract plain text from message content (string or content blocks)."""
     if isinstance(content, str):

@@ -28,6 +28,8 @@ describe("App", () => {
         payload = [];
       } else if (String(url).includes("/api/processes")) {
         payload = {};
+      } else if (String(url).includes("/api/session-counts")) {
+        payload = { active: 4, previous: 12 };
       } else if (String(url).includes("/api/tasks")) {
         payload = [];
       } else if (String(url).includes("/api/server-info")) {
@@ -73,22 +75,51 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Active sessions" })).toBeInTheDocument();
   });
 
-  it("removes session search and widgets from Task Review", () => {
+  it("removes session search and widgets from Task Review", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      let payload: unknown = {};
+      if (String(url).includes("/api/session-counts")) {
+        payload = { active: 4, previous: 12 };
+      } else if (
+        String(url).includes("/api/sessions")
+        || String(url).includes("/api/remote-sessions")
+      ) {
+        payload = [];
+      } else if (String(url).includes("/api/processes")) {
+        payload = {};
+      } else if (String(url).includes("/api/control-plane")) {
+        payload = { runtimes: [] };
+      } else if (String(url).includes("/api/tasks")) {
+        payload = [];
+      } else if (String(url).includes("/api/server-info")) {
+        payload = { pid: 1, port: "5112", sync_folder: null, log_file: "", log_level: "INFO" };
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(payload),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     render(<App />);
     fireEvent.click(
       screen.getByRole("navigation", { name: "Workspace navigation" })
         .querySelector('[data-tab="tasks"]') as HTMLElement,
     );
     expect(screen.getByRole("heading", { name: "Task Review" })).toBeInTheDocument();
-    expect(
-      within(
-        screen.getByRole("navigation", { name: "Workspace navigation" }),
-      ).getByRole("button", { name: "Active" }),
-    ).toBeInTheDocument();
+    const navigation = screen.getByRole("navigation", { name: "Workspace navigation" });
+    await waitFor(() => {
+      expect(within(navigation).getByRole("button", { name: "Active4" }))
+        .toBeInTheDocument();
+      expect(within(navigation).getByRole("button", { name: "Previous12" }))
+        .toBeInTheDocument();
+    });
     expect(
       screen.getByRole("button", { name: /Notifications/ }),
     ).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Filter sessions/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Stats/ })).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });

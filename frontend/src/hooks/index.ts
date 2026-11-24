@@ -6,4 +6,5 @@ export { useVersion } from "./useVersion";
 export { useAutostart } from "./useAutostart";
 export { useSettings } from "./useSettings";
 export { useTasks } from "./useTasks";
+export { useSessionCounts } from "./useSessionCounts";
 export type { Mode, Palette, ThemeState } from "./useTheme";
